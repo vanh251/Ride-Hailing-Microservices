@@ -27,6 +27,15 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
 
+internal:
+  api-key: ${INTERNAL_API_KEY:}
+
+driver-service:
+  url: ${DRIVER_SERVICE_URL:http://driver-service:8082}
+
+pricing-service:
+  url: ${PRICING_SERVICE_URL:http://pricing-service:8085}
+
 management:
   endpoints:
     web:

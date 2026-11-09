@@ -16,7 +16,8 @@ import java.util.UUID;
 @Schema(description = "Request body to create a new ride request")
 public class CreateTripRequest {
 
-    @Schema(description = "Optional passenger UUID (defaults to authenticated user)", example = "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d")
+    @Schema(description = "Ignored; passenger identity is taken from the authenticated gateway header",
+            deprecated = true)
     private UUID passengerId;
 
     @NotNull(message = "Pickup location is required")
@@ -26,9 +27,11 @@ public class CreateTripRequest {
 
     @NotNull(message = "Destination location is required")
     @Valid
-    @Schema(description = "Destination location with coordinates and address", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "Destination location with coordinates and address",
+            requiredMode = Schema.RequiredMode.REQUIRED)
     private LocationDto destination;
 
-    @Schema(description = "Estimated fare calculated or quoted", example = "45000")
+    @Schema(description = "Ignored; estimated fare is obtained from Pricing Service", deprecated = true)
     private BigDecimal estimatedFare;
+
 }

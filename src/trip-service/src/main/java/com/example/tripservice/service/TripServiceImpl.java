@@ -1,34 +1,22 @@
 package com.example.tripservice.service;
 
-import com.example.tripservice.dto.CancelTripRequest;
-import com.example.tripservice.dto.CreateTripRequest;
-import com.example.tripservice.dto.TripResponse;
-import com.example.tripservice.entity.RideRequest;
-import com.example.tripservice.entity.Trip;
-import com.example.tripservice.entity.TripStatus;
-import com.example.tripservice.entity.TripStatusHistory;
-import com.example.tripservice.event.EventEnvelope;
-import com.example.tripservice.event.TripEventPublisher;
-import com.example.tripservice.exception.InvalidTripStateException;
-import com.example.tripservice.exception.TripNotFoundException;
+import com.example.tripservice.client.*;
+import com.example.tripservice.dto.*;
+import com.example.tripservice.entity.*;
+import com.example.tripservice.event.*;
+import com.example.tripservice.exception.*;
 import com.example.tripservice.mapper.TripMapper;
-import com.example.tripservice.repository.RideRequestRepository;
-import com.example.tripservice.repository.TripRepository;
-import com.example.tripservice.entity.SagaLog;
-import com.example.tripservice.repository.SagaLogRepository;
-import com.example.tripservice.client.PricingServiceClient;
-import com.example.tripservice.repository.TripStatusHistoryRepository;
+import com.example.tripservice.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.client.RestClientException;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.time.*;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -36,296 +24,296 @@ import java.util.UUID;
 public class TripServiceImpl implements TripService {
 
     private final TripRepository tripRepository;
+
     private final RideRequestRepository rideRequestRepository;
+
     private final TripStatusHistoryRepository tripStatusHistoryRepository;
+
     private final TripMapper tripMapper;
+
     private final TripEventPublisher eventPublisher;
+
     private final SagaLogRepository sagaLogRepository;
+
     private final PricingServiceClient pricingServiceClient;
+
+    private final DriverServiceClient driverServiceClient;
+
+    private final Clock clock;
 
     @Override
     @Transactional
     public TripResponse createTrip(CreateTripRequest request, String correlationId, UUID passengerId) {
-        UUID effectivePassengerId = passengerId != null ? passengerId :
-                (request.getPassengerId() != null ? request.getPassengerId() : UUID.randomUUID());
-
-        String effectiveCorrelationId = (correlationId != null && !correlationId.isBlank()) ?
-                correlationId : UUID.randomUUID().toString();
-
-        double distanceKm = calculateDistanceKm(
-                request.getPickup().getLatitude(), request.getPickup().getLongitude(),
-                request.getDestination().getLatitude(), request.getDestination().getLongitude()
-        );
-
-        BigDecimal estimatedFare = request.getEstimatedFare();
-        if (estimatedFare == null) {
-            estimatedFare = calculateEstimatedFare(distanceKm);
+        authenticated(passengerId);
+        String correlation = (correlationId == null || correlationId.isBlank()) ? UUID.randomUUID().toString()
+                : correlationId;
+        try {
+            UUID.fromString(correlation);
         }
-
-        RideRequest rideRequest = RideRequest.builder()
-                .passengerId(effectivePassengerId)
-                .pickupAddress(request.getPickup().getAddress())
-                .pickupLat(request.getPickup().getLatitude())
-                .pickupLng(request.getPickup().getLongitude())
-                .dropoffAddress(request.getDestination().getAddress())
-                .dropoffLat(request.getDestination().getLatitude())
-                .dropoffLng(request.getDestination().getLongitude())
-                .status("PENDING")
-                .correlationId(effectiveCorrelationId)
-                .build();
-        rideRequest = rideRequestRepository.save(rideRequest);
-
-        Trip trip = Trip.builder()
-                .rideRequestId(rideRequest.getRequestId())
-                .passengerId(effectivePassengerId)
-                .status(TripStatus.SEARCHING)
-                .pickupAddress(request.getPickup().getAddress())
-                .pickupLat(request.getPickup().getLatitude())
-                .pickupLng(request.getPickup().getLongitude())
-                .dropoffAddress(request.getDestination().getAddress())
-                .dropoffLat(request.getDestination().getLatitude())
-                .dropoffLng(request.getDestination().getLongitude())
-                .distanceKm(distanceKm)
-                .estimatedFare(estimatedFare)
-                .currency("VND")
-                .correlationId(effectiveCorrelationId)
-                .build();
+        catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "X-Correlation-ID must be a UUID");
+        }
+        var quote = pricingServiceClient.getQuote(request.getPickup(), request.getDestination());
+        if (quote == null)
+            throw new RestClientException("Missing Pricing quote");
+        var ride = RideRequest.builder()
+            .passengerId(passengerId)
+            .pickupAddress(request.getPickup().getAddress())
+            .pickupLat(request.getPickup().getLatitude())
+            .pickupLng(request.getPickup().getLongitude())
+            .dropoffAddress(request.getDestination().getAddress())
+            .dropoffLat(request.getDestination().getLatitude())
+            .dropoffLng(request.getDestination().getLongitude())
+            .status("PENDING")
+            .correlationId(correlation)
+            .build();
+        ride = rideRequestRepository.save(ride);
+        var trip = Trip.builder()
+            .rideRequestId(ride.getRequestId())
+            .passengerId(passengerId)
+            .status(TripStatus.SEARCHING)
+            .pickupAddress(ride.getPickupAddress())
+            .pickupLat(ride.getPickupLat())
+            .pickupLng(ride.getPickupLng())
+            .dropoffAddress(ride.getDropoffAddress())
+            .dropoffLat(ride.getDropoffLat())
+            .dropoffLng(ride.getDropoffLng())
+            .distanceKm(quote.estimatedDistanceKm())
+            .estimatedFare(quote.totalFare())
+            .currency(quote.currency())
+            .correlationId(correlation)
+            .build();
         trip = tripRepository.save(trip);
-
-        rideRequest.setTripId(trip.getTripId());
-        rideRequest.setStatus("SEARCHING");
-        rideRequestRepository.save(rideRequest);
-
-        recordStatusHistory(trip.getTripId(), TripStatus.REQUESTED, TripStatus.SEARCHING, "Ride requested and searching for driver");
-        recordSagaLog(trip.getTripId(), "TripRequested", "STARTED", "{}");
-
-        publishTripEvent("RideRequested", trip.getTripId(), effectiveCorrelationId, Map.of(
-                "tripId", trip.getTripId(),
-                "passengerId", effectivePassengerId,
-                "pickup", request.getPickup(),
-                "destination", request.getDestination(),
-                "estimatedFare", estimatedFare,
-                "requestedAt", trip.getCreatedAt()
-        ));
-
-        log.info("Trip created: tripId={}, passengerId={}, correlationId={}", trip.getTripId(), effectivePassengerId, effectiveCorrelationId);
+        ride.setTripId(trip.getTripId());
+        ride.setStatus("SEARCHING");
+        rideRequestRepository.save(ride);
+        history(trip, TripStatus.REQUESTED, TripStatus.SEARCHING, "Ride requested");
+        saga(trip, "RideRequested", "STARTED", "{}");
+        publish("RideRequested", trip, null,
+                Map.of("tripId", trip.getTripId(), "passengerId", passengerId, "pickup", request.getPickup(),
+                        "destination", request.getDestination(), "estimatedFare", trip.getEstimatedFare(),
+                        "requestedAt", trip.getCreatedAt()));
         return tripMapper.toResponse(trip);
     }
 
     @Override
     @Transactional(readOnly = true)
     public TripResponse getTrip(UUID tripId) {
-        Trip trip = tripRepository.findById(tripId)
-                .orElseThrow(() -> new TripNotFoundException(tripId));
-        return tripMapper.toResponse(trip);
+        return tripMapper.toResponse(load(tripId));
     }
 
     @Override
     @Transactional
     public TripResponse acceptTrip(UUID tripId, UUID driverId) {
-        Trip trip = tripRepository.findById(tripId)
-                .orElseThrow(() -> new TripNotFoundException(tripId));
-
-        if (trip.getStatus() != TripStatus.SEARCHING && trip.getStatus() != TripStatus.ASSIGNED) {
+        var trip = loadForUpdate(tripId);
+        if (trip.getStatus() != TripStatus.ASSIGNED)
             throw new InvalidTripStateException(trip.getStatus(), TripStatus.ASSIGNED);
-        }
-
-        TripStatus previousStatus = trip.getStatus();
-        if (trip.getStatus() == TripStatus.SEARCHING) {
-            trip.setStatus(TripStatus.ASSIGNED);
-            recordStatusHistory(tripId, previousStatus, TripStatus.ASSIGNED, "Driver accepted trip");
-        }
-
-        if (driverId != null) {
-            trip.setDriverId(driverId);
-        }
-
-        trip = tripRepository.save(trip);
-        log.info("Trip accepted: tripId={}, driverId={}, status={}", tripId, trip.getDriverId(), trip.getStatus());
+        requireDriver(trip, driverId);
         return tripMapper.toResponse(trip);
     }
 
     @Override
     @Transactional
-    public TripResponse startTrip(UUID tripId) {
-        Trip trip = tripRepository.findById(tripId)
-                .orElseThrow(() -> new TripNotFoundException(tripId));
-
-        if (trip.getStatus() != TripStatus.ASSIGNED) {
+    public TripResponse startTrip(UUID tripId, UUID driverId) {
+        var trip = loadForUpdate(tripId);
+        requireDriver(trip, driverId);
+        if (trip.getStatus() != TripStatus.ASSIGNED)
             throw new InvalidTripStateException(trip.getStatus(), TripStatus.IN_PROGRESS);
-        }
-
-        trip.setStatus(TripStatus.IN_PROGRESS);
-        trip.setStartedAt(Instant.now());
-        recordStatusHistory(tripId, TripStatus.ASSIGNED, TripStatus.IN_PROGRESS, "Driver started trip");
-        trip = tripRepository.save(trip);
-
-        publishTripEvent("TripStarted", trip.getTripId(), trip.getCorrelationId(), Map.of(
-                "tripId", trip.getTripId(),
-                "driverId", trip.getDriverId() != null ? trip.getDriverId() : "",
-                "startedAt", trip.getStartedAt()
-        ));
-
-        log.info("Trip started: tripId={}", tripId);
+        transition(trip, TripStatus.IN_PROGRESS, "Driver started trip");
+        trip.setStartedAt(clock.instant());
+        tripRepository.save(trip);
+        publish("TripStarted", trip, null,
+                Map.of("tripId", tripId, "driverId", trip.getDriverId(), "passengerId", trip.getPassengerId(),
+                        "startedAt", trip.getStartedAt(), "driverLocation",
+                        Map.of("latitude", trip.getPickupLat(), "longitude", trip.getPickupLng())));
         return tripMapper.toResponse(trip);
     }
 
     @Override
     @Transactional
-    public TripResponse completeTrip(UUID tripId) {
-        Trip trip = tripRepository.findById(tripId)
-                .orElseThrow(() -> new TripNotFoundException(tripId));
-
-        if (trip.getStatus() != TripStatus.IN_PROGRESS) {
+    public TripResponse completeTrip(UUID tripId, UUID driverId) {
+        var trip = loadForUpdate(tripId);
+        requireDriver(trip, driverId);
+        if (trip.getStatus() != TripStatus.IN_PROGRESS)
             throw new InvalidTripStateException(trip.getStatus(), TripStatus.COMPLETED);
-        }
-
-        trip.setStatus(TripStatus.COMPLETED);
-        trip.setCompletedAt(Instant.now());
-        
-        int durationMin = 15; // default fallback
-        if (trip.getStartedAt() != null) {
-            durationMin = (int) java.time.Duration.between(trip.getStartedAt(), trip.getCompletedAt()).toMinutes();
-            if (durationMin < 1) durationMin = 1;
-        }
-        
-        if (trip.getFinalFare() == null) {
-            BigDecimal calculatedFare = pricingServiceClient.getFinalFare(tripId, trip.getDistanceKm() != null ? trip.getDistanceKm() : 0.0, durationMin);
-            trip.setFinalFare(calculatedFare != null ? calculatedFare : (trip.getEstimatedFare() != null ? trip.getEstimatedFare() : BigDecimal.valueOf(30000)));
-        }
-
-        recordStatusHistory(tripId, TripStatus.IN_PROGRESS, TripStatus.COMPLETED, "Driver completed trip");
-        recordSagaLog(tripId, "TripCompleted", "COMPLETED", "{}");
-        trip = tripRepository.save(trip);
-
-        publishTripEvent("TripCompleted", trip.getTripId(), trip.getCorrelationId(), Map.of(
-                "tripId", trip.getTripId(),
-                "driverId", trip.getDriverId() != null ? trip.getDriverId() : "",
-                "finalFare", trip.getFinalFare(),
-                "completedAt", trip.getCompletedAt()
-        ));
-
-        log.info("Trip completed: tripId={}, finalFare={}", tripId, trip.getFinalFare());
+        Instant completedAt = clock.instant();
+        if (trip.getStartedAt() == null || trip.getStartedAt().isAfter(completedAt) || trip.getDistanceKm() == null
+                || !Double.isFinite(trip.getDistanceKm()) || trip.getDistanceKm() < 0)
+            throw new InvalidTripStateException("Trip has no valid route/start metrics");
+        int duration = Math.toIntExact(Math.max(1, Duration.between(trip.getStartedAt(), completedAt).toMinutes()));
+        var fare = pricingServiceClient.getFinalFare(tripId, trip.getDistanceKm(), duration);
+        if (fare == null || fare.totalFare() == null || fare.totalFare().signum() <= 0
+                || !trip.getCurrency().equals(fare.currency()))
+            throw new RestClientException("Invalid final fare");
+        trip.setFinalFare(fare.totalFare());
+        trip.setCompletedAt(completedAt);
+        transition(trip, TripStatus.COMPLETED, "Driver completed trip");
+        tripRepository.save(trip);
+        saga(trip, "TripCompleted", "COMPLETED", "{}");
+        publish("TripCompleted", trip, null,
+                Map.of("tripId", tripId, "driverId", trip.getDriverId(), "passengerId", trip.getPassengerId(),
+                        "actualDistanceKm", trip.getDistanceKm(), "actualDurationMin", duration, "finalFare",
+                        trip.getFinalFare(), "currency", trip.getCurrency(), "completedAt", completedAt));
         return tripMapper.toResponse(trip);
     }
 
     @Override
     @Transactional
-    public TripResponse cancelTrip(UUID tripId, CancelTripRequest request) {
-        Trip trip = tripRepository.findById(tripId)
-                .orElseThrow(() -> new TripNotFoundException(tripId));
+    public TripResponse cancelTrip(UUID tripId, CancelTripRequest request, UUID passengerId) {
+        authenticated(passengerId);
+        var trip = loadForUpdate(tripId);
+        if (!passengerId.equals(trip.getPassengerId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not the trip passenger");
+        String detail = request != null && request.getReason() != null ? request.getReason() : "Passenger cancelled";
+        return cancel(trip, "PASSENGER_CANCELLED", detail);
+    }
 
-        if (trip.getStatus() != TripStatus.REQUESTED &&
-            trip.getStatus() != TripStatus.SEARCHING &&
-            trip.getStatus() != TripStatus.ASSIGNED) {
-            throw new InvalidTripStateException("Cannot cancel trip in status: " + trip.getStatus());
+    @Override
+    @Transactional
+    public TripResponse cancelForMatchingTimeout(UUID tripId) {
+        var trip = loadForUpdate(tripId);
+        if (trip.getStatus() == TripStatus.CANCELLED)
+            return tripMapper.toResponse(trip);
+        if (trip.getStatus() != TripStatus.SEARCHING)
+            throw new InvalidTripStateException("Timeout applies only to SEARCHING trips");
+        return cancel(trip, "MATCHING_TIMEOUT", "Matching search exhausted");
+    }
+
+    private TripResponse cancel(Trip trip, String reason, String detail) {
+        if (trip.getStatus() == TripStatus.CANCELLED)
+            return tripMapper.toResponse(trip);
+        if (trip.getStatus() != TripStatus.SEARCHING && trip.getStatus() != TripStatus.ASSIGNED)
+            throw new InvalidTripStateException("Cannot cancel trip in " + trip.getStatus());
+        TripStatus previous = trip.getStatus();
+        if (trip.getDriverId() != null) {
+            try {
+                driverServiceClient.releaseDriverReservation(trip.getDriverId(), trip.getTripId());
+            }
+            catch (RestClientException ex) {
+                log.error("Release failed trip={}; TripCancelled/lease must compensate", trip.getTripId(), ex);
+            }
         }
-
-        TripStatus previousStatus = trip.getStatus();
-        trip.setStatus(TripStatus.CANCELLED);
-        trip.setCancelledAt(Instant.now());
-        String reason = (request != null && request.getReason() != null) ? request.getReason() : "Cancelled by user";
-        trip.setCancellationReason(reason);
-
-        recordStatusHistory(tripId, previousStatus, TripStatus.CANCELLED, reason);
-        trip = tripRepository.save(trip);
-
-        if (trip.getRideRequestId() != null) {
-            rideRequestRepository.findById(trip.getRideRequestId()).ifPresent(rr -> {
-                rr.setStatus("CANCELLED");
-                rideRequestRepository.save(rr);
+        transition(trip, TripStatus.CANCELLED, detail);
+        trip.setCancellationReason(detail);
+        trip.setCancelledAt(clock.instant());
+        tripRepository.save(trip);
+        if (trip.getRideRequestId() != null)
+            rideRequestRepository.findById(trip.getRideRequestId()).ifPresent(r -> {
+                r.setStatus("CANCELLED");
+                rideRequestRepository.save(r);
             });
-        }
-
-        publishTripEvent("TripCancelled", trip.getTripId(), trip.getCorrelationId(), Map.of(
-                "tripId", trip.getTripId(),
-                "reason", reason,
-                "cancelledAt", trip.getCancelledAt()
-        ));
-
-        log.info("Trip cancelled: tripId={}, reason={}", tripId, reason);
+        var payload = new LinkedHashMap<String, Object>();
+        payload.put("tripId", trip.getTripId());
+        payload.put("passengerId", trip.getPassengerId());
+        if (trip.getDriverId() != null)
+            payload.put("driverId", trip.getDriverId());
+        payload.put("previousStatus", previous.name());
+        payload.put("reason", reason);
+        payload.put("cancelledAt", trip.getCancelledAt());
+        publish("TripCancelled", trip, null, payload);
         return tripMapper.toResponse(trip);
     }
 
     @Override
     @Transactional
-    public TripResponse assignDriver(UUID tripId, UUID driverId) {
-        Trip trip = tripRepository.findById(tripId)
-                .orElseThrow(() -> new TripNotFoundException(tripId));
-
+    public TripResponse assignDriver(UUID tripId, UUID driverId, UUID sourceEventId) {
+        var trip = loadForUpdate(tripId);
         if (trip.getStatus() != TripStatus.SEARCHING) {
-            throw new InvalidTripStateException(trip.getStatus(), TripStatus.ASSIGNED);
+            log.info("Ignoring assignment for trip={} status={}", tripId, trip.getStatus());
+            return tripMapper.toResponse(trip);
         }
-
+        if (driverId == null || sourceEventId == null)
+            throw new ValidationException("Assignment requires driver and source event");
         trip.setDriverId(driverId);
-        trip.setStatus(TripStatus.ASSIGNED);
-        recordStatusHistory(tripId, TripStatus.SEARCHING, TripStatus.ASSIGNED, "Driver reserved and assigned");
-        recordSagaLog(tripId, "DriverReserved", "DRIVER_RESERVED", "{\"driverId\":\"" + driverId + "\"}");
-        trip = tripRepository.save(trip);
-
-        publishTripEvent("DriverAssigned", trip.getTripId(), trip.getCorrelationId(), Map.of(
-                "tripId", trip.getTripId(),
-                "driverId", driverId,
-                "assignedAt", Instant.now()
-        ));
-
-        log.info("Driver assigned to trip: tripId={}, driverId={}", tripId, driverId);
+        transition(trip, TripStatus.ASSIGNED, "Driver reserved");
+        tripRepository.save(trip);
+        saga(trip, "DriverReserved", "DRIVER_RESERVED", "{\"driverId\":\"" + driverId + "\"}");
+        publish("DriverAssigned", trip, sourceEventId, Map.of("tripId", tripId, "driverId", driverId, "passengerId",
+                trip.getPassengerId(), "assignedAt", clock.instant()));
         return tripMapper.toResponse(trip);
     }
 
-    private void recordStatusHistory(UUID tripId, TripStatus fromStatus, TripStatus toStatus, String reason) {
-        TripStatusHistory history = TripStatusHistory.builder()
-                .tripId(tripId)
-                .fromStatus(fromStatus)
-                .toStatus(toStatus)
-                .reason(reason)
-                .changedAt(Instant.now())
-                .build();
-        tripStatusHistoryRepository.save(history);
+    @Override
+    @Transactional
+    public void applyPaymentResult(UUID tripId, UUID paymentId, UUID passengerId, BigDecimal amount, String currency,
+            boolean succeeded, String reason) {
+        var trip = loadForUpdate(tripId);
+        if (trip.getStatus() != TripStatus.COMPLETED) {
+            log.info("Ignoring payment result payment={} trip={} status={}", paymentId, tripId, trip.getStatus());
+            return;
+        }
+        if (!trip.getPassengerId().equals(passengerId) || !trip.getCurrency().equals(currency)
+                || trip.getFinalFare() == null || trip.getFinalFare().compareTo(amount) != 0)
+            throw new ValidationException("Payment does not match completed trip");
+        transition(trip, succeeded ? TripStatus.PAID : TripStatus.PAYMENT_FAILED,
+                succeeded ? "Payment succeeded" : reason);
+        tripRepository.save(trip);
+        saga(trip, "PaymentResult", succeeded ? "SAGA_COMPLETED" : "COMPENSATED",
+                "{\"paymentId\":\"" + paymentId + "\"}");
+        if (!succeeded)
+            log.warn("Trip payment debt recorded trip={} payment={} reason={}", tripId, paymentId, reason);
     }
 
-    private void recordSagaLog(UUID tripId, String stepName, String status, String payload) {
-        SagaLog sagaLog = SagaLog.builder()
-                .id(UUID.randomUUID())
-                .tripId(tripId)
-                .stepName(stepName)
-                .status(status)
-                .payload(payload)
-                .createdAt(Instant.now())
-                .build();
-        sagaLogRepository.save(sagaLog);
+    private Trip load(UUID id) {
+        return tripRepository.findById(id).orElseThrow(() -> new TripNotFoundException(id));
     }
 
-    private void publishTripEvent(String eventType, UUID tripId, String correlationId, Object payload) {
-        EventEnvelope<Object> envelope = EventEnvelope.builder()
-                .eventId(UUID.randomUUID())
-                .eventType(eventType)
-                .aggregateId(tripId.toString())
-                .aggregateType("Trip")
-                .producer("trip-service")
-                .correlationId(correlationId)
-                .causationId(null)
-                .occurredAt(Instant.now())
-                .payload(payload)
-                .build();
-
-        eventPublisher.publish(envelope);
+    private Trip loadForUpdate(UUID id) {
+        return tripRepository.findByIdForUpdate(id).orElseThrow(() -> new TripNotFoundException(id));
     }
 
-    private double calculateDistanceKm(double lat1, double lon1, double lat2, double lon2) {
-        final int R = 6371; // Earth radius in km
-        double latDistance = Math.toRadians(lat2 - lat1);
-        double lonDistance = Math.toRadians(lon2 - lon1);
-        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
-                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
-        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return Math.round(R * c * 100.0) / 100.0;
+    private static void authenticated(UUID id) {
+        if (id == null)
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authenticated identity is required");
     }
 
-    private BigDecimal calculateEstimatedFare(double distanceKm) {
-        // Base fare 15,000 VND + 10,000 VND per km
-        double fare = 15000 + (distanceKm * 10000);
-        return BigDecimal.valueOf(fare).setScale(0, RoundingMode.HALF_UP);
+    private static void requireDriver(Trip trip, UUID driverId) {
+        authenticated(driverId);
+        if (!driverId.equals(trip.getDriverId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not the assigned driver");
     }
+
+    private void transition(Trip trip, TripStatus next, String reason) {
+        TripStatus previous = trip.getStatus();
+        if (!previous.canTransitionTo(next))
+            throw new InvalidTripStateException(previous, next);
+        trip.setStatus(next);
+        history(trip, previous, next, reason);
+    }
+
+    private void history(Trip trip, TripStatus from, TripStatus to, String reason) {
+        tripStatusHistoryRepository.save(TripStatusHistory.builder()
+            .tripId(trip.getTripId())
+            .fromStatus(from)
+            .toStatus(to)
+            .reason(reason)
+            .changedAt(clock.instant())
+            .build());
+    }
+
+    private void saga(Trip trip, String step, String status, String payload) {
+        sagaLogRepository.save(SagaLog.builder()
+            .id(UUID.randomUUID())
+            .tripId(trip.getTripId())
+            .stepName(step)
+            .status(status)
+            .payload(payload)
+            .createdAt(clock.instant())
+            .build());
+    }
+
+    private void publish(String type, Trip trip, UUID source, Object payload) {
+        eventPublisher.publish(EventEnvelope.builder()
+            .eventId(UUID.randomUUID())
+            .eventType(type)
+            .aggregateId(trip.getTripId().toString())
+            .aggregateType("Trip")
+            .producer("trip-service")
+            .correlationId(trip.getCorrelationId())
+            .causationId(source == null ? null : source.toString())
+            .occurredAt(clock.instant())
+            .payload(payload)
+            .build());
+    }
+
 }
