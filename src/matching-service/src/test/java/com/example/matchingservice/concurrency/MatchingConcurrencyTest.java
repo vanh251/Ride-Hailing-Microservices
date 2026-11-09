@@ -1,186 +1,110 @@
 package com.example.matchingservice.concurrency;
 
-import com.example.matchingservice.client.DriverServiceClient;
-import com.example.matchingservice.dto.AvailableDriverDto;
-import com.example.matchingservice.dto.MatchResponse;
-import com.example.matchingservice.dto.ReserveDriverResponse;
-import com.example.matchingservice.entity.DriverOffer;
-import com.example.matchingservice.entity.MatchRequest;
-import com.example.matchingservice.entity.MatchStatus;
-import com.example.matchingservice.event.MatchingEventPublisher;
-import com.example.matchingservice.exception.DriverReservationConflictException;
-import com.example.matchingservice.exception.MatchingFailedException;
-import com.example.matchingservice.repository.DriverOfferRepository;
-import com.example.matchingservice.repository.MatchRequestRepository;
+import com.example.matchingservice.client.*;
+import com.example.matchingservice.dto.*;
+import com.example.matchingservice.entity.*;
+import com.example.matchingservice.event.*;
+import com.example.matchingservice.repository.*;
 import com.example.matchingservice.service.MatchingServiceImpl;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
+import com.example.matchingservice.exception.DriverReservationConflictException;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.time.Instant;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.time.*;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-@ExtendWith(MockitoExtension.class)
 class MatchingConcurrencyTest {
 
-    @Mock
-    private MatchRequestRepository matchRequestRepository;
-
-    @Mock
-    private DriverOfferRepository driverOfferRepository;
-
-    @Mock
-    private DriverServiceClient driverServiceClient;
-
-    @Mock
-    private MatchingEventPublisher eventPublisher;
-
-    @InjectMocks
-    private MatchingServiceImpl matchingService;
-
-    private UUID requestAId;
-    private UUID requestBId;
-    private UUID sharedDriverId;
-    private MatchRequest requestA;
-    private MatchRequest requestB;
-
-    @BeforeEach
-    void setUp() {
-        requestAId = UUID.randomUUID();
-        requestBId = UUID.randomUUID();
-        sharedDriverId = UUID.randomUUID();
-
-        requestA = MatchRequest.builder()
-                .requestId(requestAId)
-                .tripId(requestAId)
-                .passengerId(UUID.randomUUID())
-                .correlationId("corr-A")
-                .pickupLat(21.0285)
-                .pickupLng(105.8542)
-                .searchRadiusKm(5.0)
-                .status(MatchStatus.PENDING)
-                .attemptCount(1)
-                .build();
-
-        requestB = MatchRequest.builder()
-                .requestId(requestBId)
-                .tripId(requestBId)
-                .passengerId(UUID.randomUUID())
-                .correlationId("corr-B")
-                .pickupLat(21.0285)
-                .pickupLng(105.8542)
-                .searchRadiusKm(5.0)
-                .status(MatchStatus.PENDING)
-                .attemptCount(1)
-                .build();
+    @Test
+    void sameDriverHasOnlyOneWinner() throws Exception {
+        race(false);
     }
 
     @Test
-    @DisplayName("Concurrency: Request A and Request B competing for same driver -> 1 SUCCESS, 1 FAILURE (no double booking)")
-    void concurrentMatching_sameDriver_onlyOneSucceeds() throws Exception {
-        when(matchRequestRepository.findById(requestAId)).thenReturn(Optional.of(requestA));
-        when(matchRequestRepository.findById(requestBId)).thenReturn(Optional.of(requestB));
-        when(matchRequestRepository.save(any(MatchRequest.class))).thenAnswer(i -> i.getArgument(0));
-        when(driverOfferRepository.save(any(DriverOffer.class))).thenAnswer(i -> i.getArgument(0));
-
-        AvailableDriverDto sharedDriver = AvailableDriverDto.builder()
-                .id(sharedDriverId)
-                .fullName("Nguyen Van Driver")
-                .status("AVAILABLE")
-                .distanceKm(0.8)
-                .version(1)
-                .build();
-
-        // Both requests see the same available driver
-        when(driverServiceClient.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble()))
-                .thenReturn(List.of(sharedDriver));
-
-        // CAS simulation: atomic check-and-set
-        // Only the first thread that executes reserveDriver wins the CAS. The second thread gets 409 Conflict.
-        AtomicBoolean isReserved = new AtomicBoolean(false);
-
-        when(driverServiceClient.reserveDriver(eq(sharedDriverId), any(UUID.class), eq(1)))
-                .thenAnswer(invocation -> {
-                    // Simulate atomic CAS: compareAndSet(false, true)
-                    boolean casSuccess = isReserved.compareAndSet(false, true);
-                    if (casSuccess) {
-                        return ReserveDriverResponse.builder()
-                                .driverId(sharedDriverId)
-                                .status("RESERVED")
-                                .reservedForTrip(invocation.getArgument(1))
-                                .version(2)
-                                .build();
-                    } else {
-                        // CAS Failed: driver already reserved
-                        throw new DriverReservationConflictException(sharedDriverId);
-                    }
-                });
-
-        int numThreads = 2;
-        ExecutorService executor = Executors.newFixedThreadPool(numThreads);
-        CountDownLatch startLatch = new CountDownLatch(1);
-        CountDownLatch doneLatch = new CountDownLatch(numThreads);
-
-        AtomicInteger successCount = new AtomicInteger(0);
-        AtomicInteger failureCount = new AtomicInteger(0);
-
-        // Thread 1: Request A
-        executor.submit(() -> {
-            try {
-                startLatch.await();
-                MatchResponse response = matchingService.matchDriver(requestAId, "corr-A");
-                if (response != null && response.getStatus() == MatchStatus.MATCHED) {
-                    successCount.incrementAndGet();
-                }
-            } catch (MatchingFailedException e) {
-                failureCount.incrementAndGet();
-            } catch (Exception e) {
-                failureCount.incrementAndGet();
-            } finally {
-                doneLatch.countDown();
-            }
-        });
-
-        // Thread 2: Request B
-        executor.submit(() -> {
-            try {
-                startLatch.await();
-                MatchResponse response = matchingService.matchDriver(requestBId, "corr-B");
-                if (response != null && response.getStatus() == MatchStatus.MATCHED) {
-                    successCount.incrementAndGet();
-                }
-            } catch (MatchingFailedException e) {
-                failureCount.incrementAndGet();
-            } catch (Exception e) {
-                failureCount.incrementAndGet();
-            } finally {
-                doneLatch.countDown();
-            }
-        });
-
-        // Release both threads simultaneously to create race condition
-        startLatch.countDown();
-        boolean completedInTime = doneLatch.await(5, TimeUnit.SECONDS);
-        executor.shutdown();
-
-        assertTrue(completedInTime, "Concurrent requests should complete within timeout");
-
-        // Verify concurrency invariant: exactly 1 SUCCESS and 1 CONFLICT/FAILURE
-        assertEquals(1, successCount.get(), "Exactly ONE request must succeed in acquiring the reservation");
-        assertEquals(1, failureCount.get(), "Exactly ONE request must fail due to CAS conflict");
-        assertNotEquals(2, successCount.get(), "Double booking MUST NOT occur!");
+    void conflictLoserRematchesToSecondDriver() throws Exception {
+        race(true);
     }
+
+    void race(boolean fallback) throws Exception {
+        var requests = mock(MatchRequestRepository.class);
+        var offers = mock(DriverOfferRepository.class);
+        var drivers = mock(DriverServiceClient.class);
+        var trips = mock(TripServiceClient.class);
+        var events = mock(MatchingEventPublisher.class);
+        var processed = mock(ProcessedEventRepository.class);
+        Clock clock = Clock.systemUTC();
+        var service = new MatchingServiceImpl(requests, offers, drivers, events, processed, trips, clock);
+        UUID a = UUID.randomUUID(), b = UUID.randomUUID(), d = UUID.randomUUID(), spare = UUID.randomUUID();
+        for (var id : List.of(a, b)) {
+            var r = MatchRequest.builder()
+                .requestId(id)
+                .tripId(id)
+                .passengerId(UUID.randomUUID())
+                .pickupLat(21.0)
+                .pickupLng(105.0)
+                .correlationId(UUID.randomUUID().toString())
+                .expiresAt(clock.instant().plusSeconds(60))
+                .build();
+            when(requests.findByIdForUpdate(id)).thenReturn(Optional.of(r));
+        }
+        when(requests.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(offers.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(trips.getTripStatus(any())).thenReturn("SEARCHING");
+        var first = candidate(d, 1);
+        var second = candidate(spare, 2);
+        when(drivers.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble()))
+            .thenReturn(fallback ? List.of(first, second) : List.of(first));
+        var held = new AtomicBoolean();
+        when(drivers.reserveDriver(any(), any(), eq(1))).thenAnswer(i -> {
+            UUID selected = i.getArgument(0), trip = i.getArgument(1);
+            if (selected.equals(d) && !held.compareAndSet(false, true))
+                throw new DriverReservationConflictException(d);
+            return ReserveDriverResponse.builder()
+                .driverId(selected)
+                .reservedForTrip(trip)
+                .status("RESERVED")
+                .version(2)
+                .reservedUntil(clock.instant().plusSeconds(30))
+                .build();
+        });
+        var start = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            var one = executor.submit(() -> {
+                start.await();
+                return service.matchDriver(a, null);
+            });
+            var two = executor.submit(() -> {
+                start.await();
+                return service.matchDriver(b, null);
+            });
+            start.countDown();
+            var results = List.of(one.get(5, TimeUnit.SECONDS), two.get(5, TimeUnit.SECONDS));
+            assertEquals(1, results.stream().filter(r -> d.equals(r.getMatchedDriverId())).count());
+            if (fallback) {
+                assertEquals(2, results.stream().filter(r -> r.getStatus() == MatchStatus.MATCHED).count());
+                assertEquals(1, results.stream().filter(r -> spare.equals(r.getMatchedDriverId())).count());
+            }
+            else
+                assertEquals(1, results.stream().filter(r -> r.getStatus() == MatchStatus.NO_DRIVER_FOUND).count());
+            verify(events, times(fallback ? 2 : 1)).publish(any());
+        }
+        finally {
+            executor.shutdownNow();
+        }
+    }
+
+    AvailableDriverDto candidate(UUID id, double distance) {
+        return AvailableDriverDto.builder()
+            .id(id)
+            .fullName("Driver")
+            .status("AVAILABLE")
+            .version(1)
+            .distanceKm(distance)
+            .location(AvailableDriverDto.DriverLocation.builder().latitude(21.0).longitude(105.0).build())
+            .build();
+    }
+
 }

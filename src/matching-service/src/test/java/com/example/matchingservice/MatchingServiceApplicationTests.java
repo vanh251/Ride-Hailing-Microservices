@@ -12,6 +12,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 class MatchingServiceApplicationTests {
 
     @MockitoBean
+    private com.example.matchingservice.repository.ProcessedEventRepository processedEventRepository;
+
+    @MockitoBean
     private MatchRequestRepository matchRequestRepository;
 
     @MockitoBean
@@ -29,4 +32,5 @@ class MatchingServiceApplicationTests {
     @Test
     void contextLoads() {
     }
+
 }
