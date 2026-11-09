@@ -524,7 +524,7 @@ A trip has been cancelled by the passenger (or timeout).
 | notification-service | Notify passenger: "Trip cancelled" |
 | notification-service | Notify driver (if assigned): "Trip has been cancelled" |
 
-> **Two compensation paths (contract v1.1):** as SRS §13.2 requires, Trip Service also releases a reserved driver synchronously with `DELETE /api/drivers/{driverId}/reserve` before publishing this event. Both paths are safe to run together: each one acts only while `drivers.reserved_for_trip = tripId`, so whichever runs second finds nothing to release, logs and skips.
+> **Two compensation paths (contract v1.1; safe commit ordering clarified in M2 W3):** Trip Service commits cancellation and its outbox together, then attempts `DELETE /api/drivers/{driverId}/reserve?tripId={tripId}` in an after-commit callback before the HTTP request returns. It never releases externally for a cancellation that rolls back. The outbox relay and REST compensation may race after commit; both paths are safe because each acts only while `drivers.reserved_for_trip = tripId`, so the second finds nothing to release. REST failure is logged and the event/lease remain fallback cleanup paths.
 
 ---
 

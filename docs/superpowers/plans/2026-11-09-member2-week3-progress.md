@@ -39,4 +39,24 @@ Whole-branch verification before review: matching `test bootJar` = 27 tests, 0 f
 
 Diff check passed with the repository's Windows line-ending handling. Seven formatter-only changes in M3's Kafka kit/test files were removed after comparing code with HEAD; the kit is unchanged.
 
-Final reviewer findings and commit IDs will be recorded after review.
+## Final review and fix pass
+
+Fresh read-only reviewer examined bb09de7..4b22dd3. It reported two Important findings and no Critical/Minor findings. Both findings were reproduced before changing production code: three cancellation regressions and the abbreviated-correlation test failed, then the same four tests passed after the fix.
+
+- Final: fixed cancellation rollback freeing an active trip's driver — cancellation state/outbox now commit before an after-commit DELETE; outbox-write and commit-failure regressions prove no release on rollback. The updated interleaving test proves CANCELLED is visible before release, so a concurrent start is rejected.
+- Final: fixed noncanonical correlation creating a trip whose event goes to DLQ — reject abbreviated UUID groups with 400 before Pricing/persistence/event emission. Canonical UUIDs retain the original business correlation.
+- Final: added real Spring Boot Kafka auto-configuration test; it passed, proving the Optional KafkaTemplate is actually wired and outbox deletes only after publish. DirtiesContext closes the broker before JVM cleanup on Windows.
+- Final: Ruling: move cancellation DELETE after commit, clarifying the original pre-publish ordering — never release a driver for a rolled-back cancellation; event/REST cleanup remain guarded/idempotent — cost: cleanup paths can race after commit and API waits up to the client timeout for REST.
+- Final: Ruling: stale DriverReserved after lease stays W5 as explicitly scoped — cost: prolonged broker/Trip downtime still needs assignment recovery; do not present W3 as covering that fault scenario.
+- Final: Ruling: full Driver/Gateway/Compose acceptance stays with owners — cost: the shared stack cannot yet be treated as working E2E; local M2 tests are not a substitute.
+- Final: Ruling: outbox is a single-relay W3 design — cost: multi-instance ordering needs separate work before scaling.
+- Final: Ruling: ignore late/contradictory payment outcomes once terminal, as planned — cost: later reconciliation/retry needs the W5 workflow rather than silently changing a completed result.
+- Final: Ruling: ambiguous reserve timeout falls back to the authoritative Driver lease — cost: a driver can remain unavailable until the 30s lease cleanup; a complete recovery protocol is outside W3.
+- Final: Ruling: no KafkaTemplate generic change — cached Boot wildcard-bean/fallback resolution and the new runtime test both support existing wiring — cost: none identified.
+- Deferred minors: none reported by the reviewer.
+
+Local component commits before the fix: d1e0ce6 (ID lifecycle), 13edc5b (Driver client), 3ee2eb9 (outbox ACK), d67db67 (Matching), 4bfe156 (Trip), 4b22dd3 (contracts/handoff). No push/merge performed.
+
+Final verification after the one review-fix pass: Matching `test bootJar` BUILD SUCCESSFUL, 27 tests, 0 failures/errors/skips; Trip `test bootJar` BUILD SUCCESSFUL, 44 tests, 0 failures/errors/skips. XML reports and fresh final build logs were inspected. PostgreSQL guarded tests ran (none skipped); embedded Kafka and actual Boot Kafka wiring ran. No Kafka temp-directory cleanup error remains after explicit context closure.
+
+Final branch handling: keep the user-requested feature branch in the current checkout. No merge, push or PR publication. Test container cleanup targets only the exact container created for this run, with no application volumes mounted. The tracked progress/handoff documents remain as the review record; build logs/reports are ignored artifacts.

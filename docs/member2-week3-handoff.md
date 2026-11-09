@@ -10,6 +10,7 @@ Nhánh `feature/m2/week3-integration`, nền `develop` tại `bb09de7`.
 - Tối đa 3 vòng/60s, scheduler 5s; compensation khi outbox hoặc DB commit lỗi. Không rematch MATCHED event đang có thể in-flight.
 - Trip kiểm tra identity/role/ownership và state; khóa dòng Trip khi cập nhật để tránh race cancel/start. Giá lấy từ quote/final, TripCompleted đủ 8 field.
 - Payment result cập nhật từ COMPLETED, dedup/history/saga cùng transaction. PaymentFailed không hoàn tác tài xế.
+- Hủy chuyến commit state/outbox trước, sau đó mới DELETE trong after-commit callback. Nếu DB/outbox rollback thì không nhả tài xế của chuyến còn hoạt động. API chờ lần thử DELETE; event và REST cleanup có thể chạy đua sau commit, đều phải idempotent.
 - Outbox đợi ACK có timeout, giữ message khi lỗi và chặn event sau cùng aggregate vượt event lỗi trong một lượt.
 - Không thêm dependency; không sửa source service của M1/M3, Compose hoặc script dùng chung.
 
@@ -30,7 +31,7 @@ Nhánh `feature/m2/week3-integration`, nền `develop` tại `bb09de7`.
 
 ## Kiểm thử
 
-Kết quả trước review cuối: **27 Matching + 40 Trip test pass**, không skip, khi bật PostgreSQL test; cả hai `bootJar` pass. Có kiểm thử Kafka KRaft nhúng thực tế với 3 partitions. Đây là kết quả M2, chưa phải E2E hệ thống qua Gateway.
+Kết quả cuối sau sửa review: **27 Matching + 44 Trip = 71 test pass**, không failure/error/skip khi bật PostgreSQL test; cả hai `bootJar` pass. Có kiểm thử Kafka KRaft nhúng với 3 partitions và Spring Boot Kafka auto-configuration thật. Hai phát hiện review đã có regression RED→GREEN: rollback khi hủy không nhả tài xế, correlation UUID viết tắt bị chặn trước khi tạo Trip. Đây là kết quả M2, chưa phải E2E hệ thống qua Gateway.
 
 Chạy `gradlew.bat test` riêng trong từng thư mục `src/matching-service`, `src/trip-service`. Test HTTP dùng server cục bộ; Kafka relay dùng KRaft broker nhúng từ dependency sẵn có.
 
