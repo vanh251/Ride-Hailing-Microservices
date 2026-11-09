@@ -14,12 +14,16 @@ import java.util.UUID;
 public class AvailableDriverDto {
 
     private UUID id;
+
     private String fullName;
+
     private String status;
+
     private DriverLocation location;
+
     private Double distanceKm;
-    @Builder.Default
-    private Integer version = 1;
+
+    private Integer version;
 
     @Getter
     @Setter
@@ -28,7 +32,11 @@ public class AvailableDriverDto {
     @Builder
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class DriverLocation {
+
         private Double latitude;
+
         private Double longitude;
+
     }
+
 }
