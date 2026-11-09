@@ -114,6 +114,9 @@ class TripLifecycleIntegrationTest {
     @MockitoSpyBean
     TripStatusHistoryRepository historyFailure;
 
+    @MockitoSpyBean
+    TripEventPublisher publisherFailure;
+
     UUID passenger;
 
     @BeforeEach
@@ -274,7 +277,7 @@ class TripLifecycleIntegrationTest {
     }
 
     @Test
-    void cancellationSerializesStartBeforeReleasingReservation() throws Exception {
+    void cancellationCommitsBeforeRelease_andConcurrentStartCannotReviveTrip() throws Exception {
         var location = LocationDto.builder().latitude(21.0).longitude(105.0).build();
         UUID trip = trips
             .createTrip(CreateTripRequest.builder().pickup(location).destination(location).build(),
@@ -294,22 +297,57 @@ class TripLifecycleIntegrationTest {
             UUID owner = passenger;
             var cancel = executor.submit(() -> trips.cancelTrip(trip, null, owner));
             assertTrue(releasing.await(5, TimeUnit.SECONDS));
+            assertEquals(TripStatus.CANCELLED, trips.getTrip(trip).getStatus());
             var start = executor.submit(() -> trips.startTrip(trip, driver));
-            try {
-                assertThrows(TimeoutException.class, () -> start.get(1, TimeUnit.SECONDS));
-            }
-            finally {
-                allowRelease.countDown();
-            }
-            assertEquals(TripStatus.CANCELLED, cancel.get(5, TimeUnit.SECONDS).getStatus());
             var failure = assertThrows(ExecutionException.class, () -> start.get(5, TimeUnit.SECONDS));
             assertInstanceOf(com.example.tripservice.exception.InvalidTripStateException.class, failure.getCause());
+            allowRelease.countDown();
+            assertEquals(TripStatus.CANCELLED, cancel.get(5, TimeUnit.SECONDS).getStatus());
             assertEquals(TripStatus.CANCELLED, trips.getTrip(trip).getStatus());
         }
         finally {
             allowRelease.countDown();
             executor.shutdownNow();
         }
+    }
+
+    UUID assignedTrip(UUID driver) {
+        var location = LocationDto.builder().latitude(21.0).longitude(105.0).build();
+        UUID trip = trips
+            .createTrip(CreateTripRequest.builder().pickup(location).destination(location).build(),
+                    UUID.randomUUID().toString(), passenger)
+            .getTripId();
+        trips.assignDriver(trip, driver, UUID.randomUUID());
+        return trip;
+    }
+
+    @Test
+    void cancellationOutboxFailureCannotFreeDriverOfActiveTrip() {
+        UUID driver = UUID.randomUUID(), trip = assignedTrip(driver);
+        doThrow(new IllegalStateException("cancel outbox failure")).when(publisherFailure)
+            .publish(argThat(e -> "TripCancelled".equals(e.getEventType())));
+        assertThrows(IllegalStateException.class, () -> trips.cancelTrip(trip, null, passenger));
+        assertEquals(TripStatus.ASSIGNED, trips.getTrip(trip).getStatus());
+        verify(drivers, never()).releaseDriverReservation(driver, trip);
+    }
+
+    @Test
+    void cancellationCommitFailureCannotFreeDriverOfActiveTrip() {
+        UUID driver = UUID.randomUUID(), trip = assignedTrip(driver);
+        doAnswer(i -> {
+            i.callRealMethod();
+            org.springframework.transaction.support.TransactionSynchronizationManager
+                .registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void beforeCommit(boolean readOnly) {
+                        throw new IllegalStateException("simulated cancellation commit failure");
+                    }
+                });
+            return null;
+        }).when(publisherFailure).publish(argThat(e -> "TripCancelled".equals(e.getEventType())));
+        assertThrows(IllegalStateException.class, () -> trips.cancelTrip(trip, null, passenger));
+        assertEquals(TripStatus.ASSIGNED, trips.getTrip(trip).getStatus());
+        verify(drivers, never()).releaseDriverReservation(driver, trip);
     }
 
 }

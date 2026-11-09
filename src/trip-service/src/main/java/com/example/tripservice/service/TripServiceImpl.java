@@ -48,7 +48,9 @@ public class TripServiceImpl implements TripService {
         String correlation = (correlationId == null || correlationId.isBlank()) ? UUID.randomUUID().toString()
                 : correlationId;
         try {
-            UUID.fromString(correlation);
+            if (!UUID.fromString(correlation).toString().equalsIgnoreCase(correlation)) {
+                throw new IllegalArgumentException("Noncanonical UUID");
+            }
         }
         catch (IllegalArgumentException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "X-Correlation-ID must be a UUID");
@@ -185,14 +187,6 @@ public class TripServiceImpl implements TripService {
         if (trip.getStatus() != TripStatus.SEARCHING && trip.getStatus() != TripStatus.ASSIGNED)
             throw new InvalidTripStateException("Cannot cancel trip in " + trip.getStatus());
         TripStatus previous = trip.getStatus();
-        if (trip.getDriverId() != null) {
-            try {
-                driverServiceClient.releaseDriverReservation(trip.getDriverId(), trip.getTripId());
-            }
-            catch (RestClientException ex) {
-                log.error("Release failed trip={}; TripCancelled/lease must compensate", trip.getTripId(), ex);
-            }
-        }
         transition(trip, TripStatus.CANCELLED, detail);
         trip.setCancellationReason(detail);
         trip.setCancelledAt(clock.instant());
@@ -211,7 +205,35 @@ public class TripServiceImpl implements TripService {
         payload.put("reason", reason);
         payload.put("cancelledAt", trip.getCancelledAt());
         publish("TripCancelled", trip, null, payload);
+        if (trip.getDriverId() != null) {
+            releaseAfterCommit(trip.getDriverId(), trip.getTripId());
+        }
         return tripMapper.toResponse(trip);
+    }
+
+    private void releaseAfterCommit(UUID driverId, UUID tripId) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager
+                .registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        releaseReservation(driverId, tripId);
+                    }
+                });
+        }
+        else {
+            releaseReservation(driverId, tripId);
+        }
+    }
+
+    private void releaseReservation(UUID driverId, UUID tripId) {
+        try {
+            driverServiceClient.releaseDriverReservation(driverId, tripId);
+        }
+        catch (RestClientException ex) {
+            log.error("Release failed for committed cancellation trip={}; TripCancelled/lease must compensate", tripId,
+                    ex);
+        }
     }
 
     @Override

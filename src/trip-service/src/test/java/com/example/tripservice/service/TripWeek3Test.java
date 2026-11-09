@@ -19,6 +19,18 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class TripWeek3Test {
 
+    @Test
+    void abbreviatedCorrelationCannotCreateTripWhoseEventWillBeRejected() {
+        var location = LocationDto.builder().latitude(21.0).longitude(105.0).build();
+        var request = CreateTripRequest.builder().pickup(location).destination(location).build();
+        lenient().when(pricing.getQuote(any(), any()))
+            .thenReturn(new PricingQuoteResponse(2.5, 12, new BigDecimal("33500"), "VND"));
+        var failure = assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> service.createTrip(request, "1-1-1-1-1", UUID.randomUUID()));
+        assertEquals(400, failure.getStatusCode().value());
+        verifyNoInteractions(trips, rides, events);
+    }
+
     @Mock
     TripRepository trips;
 
