@@ -13,12 +13,31 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class MatchRequest {
+public class MatchRequest implements org.springframework.data.domain.Persistable<UUID> {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "request_id", updatable = false, nullable = false)
     private UUID requestId;
+
+    @Transient
+    @Builder.Default
+    private boolean newEntity = true;
+
+    @Override
+    public UUID getId() {
+        return requestId;
+    }
+
+    @Override
+    public boolean isNew() {
+        return newEntity;
+    }
+
+    @PostLoad
+    @PostPersist
+    public void markPersisted() {
+        newEntity = false;
+    }
 
     @Column(name = "trip_id", nullable = false)
     private UUID tripId;
@@ -87,4 +106,5 @@ public class MatchRequest {
     public void preUpdate() {
         this.updatedAt = Instant.now();
     }
+
 }
