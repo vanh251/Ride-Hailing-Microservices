@@ -293,7 +293,7 @@ The driver has started the trip (picked up the passenger).
   "aggregateType": "Trip",
   "producer": "trip-service",
   "correlationId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "causationId": "e0000000-0000-4000-8000-000000000003",
+  "causationId": null,
   "schemaVersion": "1.0",
   "occurredAt": "2026-09-30T10:05:00Z",
   "payload": {
@@ -350,7 +350,7 @@ The driver has completed the trip (arrived at destination). Triggers payment pro
   "aggregateType": "Trip",
   "producer": "trip-service",
   "correlationId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "causationId": "e0000000-0000-4000-8000-000000000004",
+  "causationId": null,
   "schemaVersion": "1.0",
   "occurredAt": "2026-09-30T10:25:00Z",
   "payload": {
@@ -544,7 +544,7 @@ Each consumer filters by `eventType` within its subscribed topics:
 
 | Consumer | Topic | EventTypes Consumed |
 |---|---|---|
-| matching-service | `trip-events` | `RideRequested` |
+| matching-service | `trip-events` | `RideRequested`, `TripCancelled` |
 | trip-service | `matching-events` | `DriverReserved` |
 | trip-service | `payment-events` | `PaymentSucceeded`, `PaymentFailed` |
 | payment-service | `trip-events` | `TripCompleted` |

@@ -457,7 +457,7 @@ Stored with 6 decimals (`DECIMAL(9, 6)`) together with `last_heartbeat_at`. A po
 
 Reserve a driver (CAS lock with 30s lease). Used internally by Matching Service.
 
-**Auth required:** Yes (internal service call)
+**Auth required:** `X-Internal-Api-Key` (`INTERNAL_API_KEY`), direct service-to-service call. Matching also sends `X-Correlation-ID`. Missing/wrong key returns `401 INVALID_INTERNAL_API_KEY`.
 
 **Request Body:**
 ```json
@@ -479,17 +479,20 @@ Reserve a driver (CAS lock with 30s lease). Used internally by Matching Service.
 ```
 
 **Errors:**
-- `409` – Driver already reserved (CAS failed – affectedRows = 0)
+- `409 CONCURRENT_UPDATE` – CAS affected zero rows: stale version, non-AVAILABLE driver or another trip owns the reservation
+- `400 VALIDATION_ERROR` – Missing/invalid tripId or expectedVersion
+- `401 INVALID_INTERNAL_API_KEY` – Missing/wrong internal key
+- `404 DRIVER_NOT_FOUND` – Driver does not exist
 
 ---
 
 ### DELETE /api/drivers/{id}/reserve
 
-Release driver reservation (compensating action). Returns driver to AVAILABLE.
+Release driver reservation. Required query parameter: `tripId` (UUID): `DELETE /api/drivers/{id}/reserve?tripId={tripId}`. Only release a RESERVED driver whose `reserved_for_trip` equals this trip. A late release must never release a newer reservation.
 
-**Auth required:** Yes (internal service call)
+**Auth required:** `X-Internal-Api-Key`. Called by Matching for rollback/rematch and Trip for cancellation.
 
-**Response 204 No Content**
+**Response 204 No Content**, including an already released or non-matching reservation. Driver owns the 30-second lease cleanup; Matching does not run another driver lease timer.
 
 ---
 
@@ -1026,4 +1029,19 @@ All client requests enter via `http://localhost:8080`.
 
 > No `lb://` scheme is used. Service discovery is via Docker DNS only.
 > `/internal/**` (service-to-service APIs) is intentionally **not** routed by the gateway.
-> `POST`/`DELETE /api/drivers/{id}/reserve` is **not** routed either (gateway returns `404`): only Matching Service calls it, directly at `http://driver-service:8082`.
+> `POST`/`DELETE /api/drivers/{id}/reserve` is **not** routed either (gateway returns `404`). Matching calls both directly at `http://driver-service:8082`; Trip also calls DELETE for cancellation compensation. Both clients use the same internal key.
+
+## 11. Member 2 W3 implementation notes (09/11/2026)
+
+These are local contract clarifications on the M2 integration branch. Driver/Gateway/Compose owners must supply the corresponding endpoints, trusted headers and environment configuration before full-system acceptance.
+
+- Gateway validates JWT/role and replaces client-supplied `X-User-Id` / `X-User-Role`. Trip requires these trusted headers; missing identity returns 401, wrong role/owner 403. Direct service ports are for development, not an authenticated alternative client entry point.
+- Create ignores legacy body passengerId/estimatedFare; identity comes from the gateway, price and route estimate from Pricing `/quote`. A supplied X-Correlation-ID must be a UUID. Pricing failure returns 503, never a fallback price.
+- Accept requires ASSIGNED and the assigned driver. It never assigns SEARCHING or changes driverId. Start/complete require the same driver; cancellation requires the trip passenger. Invalid lifecycle state returns 409. Client cancellation supports SEARCHING/ASSIGNED and is idempotent once CANCELLED.
+- Complete calls Pricing `/final` before committing COMPLETED and publishes all eight required fields. W3 uses the quote distance as simulated trip distance and elapsed minutes (minimum 1), not GPS mileage. Pricing failure leaves IN_PROGRESS and emits no completion event.
+- Internal GET `/api/trips/{id}` and POST `/api/trips/{id}/cancel` use X-Internal-Api-Key. Internal cancel only accepts `{ "reason": "MATCHING_TIMEOUT" }`, only changes SEARCHING, and is idempotent for CANCELLED. This key cannot start or complete a trip.
+- Matching match/rematch endpoints require the internal key. M2 creates requestId = tripId from RideRequested. Unknown manual requestId returns 404, never fabricated data. A manual attempt returns 202 with resulting MATCHED/NO_DRIVER_FOUND, correcting earlier illustrative MATCHING/REMATCHING labels. Background retry uses the scheduler.
+- Defaults: radius 5 km, search budget 60s, maximum 3 rounds, retry scan 5s. CAS 409 moves to the next candidate in the same round. Search rounds are separate from the three Kafka consumer retries.
+- Rematch cannot replace a committed MATCHED reservation whose DriverReserved may be in flight. Only unsuccessful searches with Trip SEARCHING are retried. Exhaustion requests cancellation from Trip; Trip alone publishes TripCancelled. Recovery beyond the lease remains W5.
+- Downstream transport/auth/contract errors propagate for bounded Kafka retry or HTTP 503, not NO_DRIVER_FOUND. Failed release is logged; TripCancelled and the authoritative lease provide fallback cleanup.
+- New HTTP errors include code where applicable: INVALID_INTERNAL_API_KEY, UNAUTHORIZED, FORBIDDEN, VALIDATION_ERROR, DOWNSTREAM_UNAVAILABLE, CONCURRENT_UPDATE. No new public URL/event is introduced.

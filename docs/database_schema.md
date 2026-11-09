@@ -398,6 +398,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ── match_requests ────────────────────────────────────────────
 -- Created when Matching Service consumes a `trip.requested` event.
+-- W3 M2 assigns request_id = trip_id; the SQL default remains for legacy/manual inserts.
 CREATE TABLE match_requests (
     request_id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     trip_id             UUID        NOT NULL,   -- soft ref → db_trip.trips.trip_id
@@ -406,13 +407,13 @@ CREATE TABLE match_requests (
 
     pickup_lat          DECIMAL(9, 6) NOT NULL,
     pickup_lng          DECIMAL(9, 6) NOT NULL,
-    search_radius_km    DECIMAL(5, 2) NOT NULL DEFAULT 3.0,
+    search_radius_km    DECIMAL(5, 2) NOT NULL DEFAULT 5.0,
 
     -- PENDING → MATCHED → NO_DRIVER_FOUND → EXPIRED
     status              VARCHAR(20)  NOT NULL DEFAULT 'PENDING'
-                            CHECK (status IN ('PENDING', 'MATCHED', 'NO_DRIVER_FOUND', 'EXPIRED')),
+                            CHECK (status IN ('PENDING', 'MATCHING', 'MATCHED', 'NO_DRIVER_FOUND', 'EXPIRED')),
     matched_driver_id   UUID,                   -- soft ref → db_driver.drivers.driver_id
-    attempt_count       SMALLINT     NOT NULL DEFAULT 0,
+    attempt_count       SMALLINT     NOT NULL DEFAULT 1,
     expires_at          TIMESTAMPTZ  NOT NULL,  -- offer window timeout
 
     -- Auditing
