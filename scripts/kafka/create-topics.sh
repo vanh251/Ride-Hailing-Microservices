@@ -34,7 +34,7 @@ for entry in "${TOPICS[@]}"; do
   fi
 
   # --create sets retention only on new topics; apply it to topics that already existed too
-  "$KAFKA_BIN/kafka-configs.sh" --bootstrap-server "$BOOTSTRAP" --alter --entity-type topics --entity-name "$topic" \n    --add-config "retention.ms=$RETENTION_MS" >/dev/null
+  "$KAFKA_BIN/kafka-configs.sh" --bootstrap-server "$BOOTSTRAP" --alter --entity-type topics --entity-name "$topic" --add-config "retention.ms=$RETENTION_MS" >/dev/null
 done
 
 echo "Kafka topics ready:"

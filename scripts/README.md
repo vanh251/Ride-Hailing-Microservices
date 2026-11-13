@@ -127,5 +127,11 @@ After release validation:
 | `scripts/e2e-happy-path.sh` | Runs the W3 Happy Path through the gateway (register → trip → matching → payment → notification) and stops at the first broken step |
 | `scripts/kafka/send-event.sh <EventType>` | Publishes a fixture of `docs/test-data/events` to Kafka to test a consumer alone |
 | `scripts/kafka/tail-dlq.sh [topic]` | Shows rejected events in the DLQ topics, with the consumer group that rejected them |
+| `scripts/kafka/replay-dlq.sh <topic> [filter]` | Message recovery: sends the original events of a DLQ topic back to their topic |
+| `scripts/start.sh` / `scripts/stop.sh` | Builds and starts the whole system and waits until healthy / stops it |
+| `scripts/fault-tests.sh [1\|2\|3]` | Fault and recovery tests of the payment flow: service down, duplicate event, database down → DLQ → replay |
+| `scripts/load/run.sh [users...]` | k6 load test of pricing and payment with 10, 50, 100, 500 users |
+
+See `docs/operations.md` for monitoring, the fault tests and the performance results.
 
 See `scripts/kafka/README.md` for examples.

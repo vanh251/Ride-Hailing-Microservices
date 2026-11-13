@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
 @Service
 public class NotificationServiceImpl implements NotificationService {
 
-    private static final int MAX_BUFFER_SIZE = 200;
+    private static final int MAX_BUFFER_SIZE = 5000;
     private final ConcurrentLinkedDeque<NotificationDto> notificationBuffer = new ConcurrentLinkedDeque<>();
 
     @Override
