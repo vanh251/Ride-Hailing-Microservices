@@ -5,8 +5,8 @@ WORKDIR /app
 
 COPY . .
 RUN chmod +x ./gradlew
-# The Gradle distribution and dependencies are cached across builds and shared by all services
-RUN --mount=type=cache,target=/root/.gradle ./gradlew bootJar --no-daemon -x test && rm -f build/libs/*-plain.jar
+# The Gradle cache is shared by all services; locked, because parallel builds corrupt the wrapper download
+RUN --mount=type=cache,target=/root/.gradle,sharing=locked ./gradlew bootJar --no-daemon -x test && rm -f build/libs/*-plain.jar
 
 FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
