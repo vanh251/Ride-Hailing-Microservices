@@ -119,7 +119,7 @@ ride-hailing-microservices/
 |---|---|---|---|---|
 | **api-gateway** | `8080` | `8080` | None | None |
 | **identity-service** | `8081` | Internal only | PostgreSQL (`identity_db`) | None |
-| **driver-service** | `8082` | Internal only | PostgreSQL (`driver_db`) | None |
+| **driver-service** | `8082` | Internal only | PostgreSQL (`driver_db`) | Apache Kafka |
 | **trip-service** | `8083` | Internal only | PostgreSQL (`trip_db`) | Apache Kafka |
 | **matching-service** | `8084` | Internal only | PostgreSQL (`matching_db`) | Apache Kafka |
 | **pricing-service** | `8085` | Internal only | None | None |

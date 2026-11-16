@@ -3,6 +3,16 @@ spring:
     exclude:
       - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
       - org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration
+  # No broker in the test suite: the listener is not started unless a test turns it on
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: driver-service-group
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+    listener:
+      ack-mode: manual_immediate
+      auto-startup: false
 
 internal:
   api-key: test-internal-api-key
@@ -14,3 +24,9 @@ jwt:
 app:
   seed:
     enabled: false
+
+# The repositories are mocks in most tests, so the lease expiry job stays off
+driver:
+  reservation:
+    lease-seconds: 30
+    expiry-check-enabled: false
