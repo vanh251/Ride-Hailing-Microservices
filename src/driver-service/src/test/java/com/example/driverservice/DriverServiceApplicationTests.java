@@ -1,6 +1,7 @@
 package com.example.driverservice;
 
 import com.example.driverservice.repository.DriverRepository;
+import com.example.driverservice.repository.ProcessedEventRepository;
 import com.example.driverservice.repository.VehicleRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -15,6 +16,9 @@ class DriverServiceApplicationTests {
 
     @MockitoBean
     private VehicleRepository vehicleRepository;
+
+    @MockitoBean
+    private ProcessedEventRepository processedEventRepository;
 
     @Test
     void contextLoads() {

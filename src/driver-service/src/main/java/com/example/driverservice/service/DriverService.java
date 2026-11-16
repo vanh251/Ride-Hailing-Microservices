@@ -7,6 +7,7 @@ import com.example.driverservice.dto.response.DriverLocationResponse;
 import com.example.driverservice.dto.response.DriverProfileResponse;
 import com.example.driverservice.dto.response.DriverStatusResponse;
 import com.example.driverservice.dto.response.NearbyDriverResponse;
+import com.example.driverservice.dto.response.ReserveDriverResponse;
 import com.example.driverservice.entity.DriverStatus;
 
 import java.util.List;
@@ -18,11 +19,16 @@ public interface DriverService {
 
     void deleteDriverByUserId(UUID userId);
 
-    /** The {@code limit} nearest AVAILABLE drivers within radiusKm of the point, with the version used for reservation. */
-    List<AvailableDriverResponse> findAvailableDrivers(double latitude, double longitude, double radiusKm, int limit);
+    /**
+     * AVAILABLE drivers within radiusKm of the point, with the version used for reservation: page {@code page}
+     * (from 0) of {@code size} drivers, ordered by distance, nearest first unless {@code farthestFirst}.
+     */
+    List<AvailableDriverResponse> findAvailableDrivers(double latitude, double longitude, double radiusKm,
+                                                       int page, int size, boolean farthestFirst);
 
-    /** The {@code limit} nearest AVAILABLE drivers within radiusKm of the pickup point, nearest first. */
-    List<NearbyDriverResponse> findNearbyDrivers(double latitude, double longitude, double radiusKm, int limit);
+    /** AVAILABLE drivers within radiusKm of the pickup point, paged and ordered like {@link #findAvailableDrivers}. */
+    List<NearbyDriverResponse> findNearbyDrivers(double latitude, double longitude, double radiusKm,
+                                                 int page, int size, boolean farthestFirst);
 
     /** Driver-initiated OFFLINE ⇄ AVAILABLE switch; callerId is the user id from the JWT. */
     DriverStatusResponse updateStatus(UUID driverId, DriverStatus target, UUID callerId);
@@ -32,4 +38,16 @@ public interface DriverService {
 
     /** Profile, active vehicle and position; an OFFLINE driver's position is shown only to the driver (callerId). */
     DriverDetailResponse getDriver(UUID driverId, UUID callerId);
+
+    /**
+     * AVAILABLE -> RESERVED for tripId, held for the lease. Fails with 409 DRIVER_ALREADY_RESERVED when the driver
+     * is not AVAILABLE or its version is no longer expectedVersion.
+     */
+    ReserveDriverResponse reserveDriver(UUID driverId, UUID tripId, int expectedVersion);
+
+    /** RESERVED -> AVAILABLE (compensation). Does nothing when the driver is not RESERVED. */
+    void releaseReservation(UUID driverId);
+
+    /** RESERVED -> AVAILABLE for every driver whose lease has run out; returns how many were released. */
+    int releaseExpiredReservations();
 }
