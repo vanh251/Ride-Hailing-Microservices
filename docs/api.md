@@ -35,6 +35,23 @@ Authorization: Bearer <accessToken>
 **Token format:** JWT (HS256), issued by Identity Service.  
 **Token expiry:** 24 hours (configurable via `JWT_EXPIRATION_MS`).
 
+### Verification at the API Gateway
+
+The gateway verifies the token (signature, expiry, `sub` is a UUID, `role` is a known role) before it routes a request, and checks the role for the endpoints marked PASSENGER or DRIVER below. "Own resource" checks stay in the backend service.
+
+| Case | Response |
+|---|---|
+| No `Authorization: Bearer` header on a protected route | `401 MISSING_TOKEN` |
+| Bad signature, malformed token, missing `sub`/`role`, unknown role | `401 INVALID_TOKEN` |
+| Expired token | `401 TOKEN_EXPIRED` |
+| Valid token, role not allowed on the endpoint | `403 ACCESS_DENIED` |
+
+Routes that need no token at the gateway: `POST /api/auth/register/passenger`, `POST /api/auth/register/driver`, `POST /api/auth/login`, `GET /api/drivers/available` and `/actuator/**`.
+
+Endpoints marked "internal" that the gateway still routes (`/api/matching/**`, `POST /api/pricing/final`, `POST /api/payments/{tripId}/charge`, `POST /api/payments/{tripId}/refund`) need a valid token of any role at the gateway; no role rule is applied to them yet.
+
+**`X-User-Id`:** for an authenticated request the gateway forwards the header `X-User-Id` = the token's `sub` (the user id) to the backend, together with the original `Authorization` header. An `X-User-Id` sent by the client is always dropped, so a backend behind the gateway can trust the header.
+
 ### Role-based Access
 
 | Role | Permissions |
@@ -946,6 +963,7 @@ Returns the latest payment of the trip. **Errors:** `400 INVALID_PARAMETER` (not
 | `Content-Type` | Yes (for POST/PATCH) | `application/json` |
 | `X-Correlation-ID` | No (auto-generated if absent) | Trace ID for distributed tracing |
 | `X-Request-ID` | No | Unique per-request ID |
+| `X-User-Id` | Set by the gateway, never by clients | User id (`sub`) of the verified token; a value sent by the client is dropped (§1) |
 | `X-Idempotency-Key` | Required for payment charge (or `idempotencyKey` in the body) | Prevents duplicate operations |
 | `X-Internal-Api-Key` | Required for `/internal/**` (service-to-service only) | Shared secret `INTERNAL_API_KEY`; never sent by clients |
 
@@ -1027,3 +1045,4 @@ All client requests enter via `http://localhost:8080`.
 > No `lb://` scheme is used. Service discovery is via Docker DNS only.
 > `/internal/**` (service-to-service APIs) is intentionally **not** routed by the gateway.
 > `POST`/`DELETE /api/drivers/{id}/reserve` is **not** routed either (gateway returns `404`): only Matching Service calls it, directly at `http://driver-service:8082`.
+> The gateway verifies the JWT before routing (§1): any other path without a valid token gets `401`, including paths that have no route.
