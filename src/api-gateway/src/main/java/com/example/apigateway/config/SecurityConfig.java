@@ -48,7 +48,9 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.GET, "/api/drivers/available").permitAll()
                 // Service-to-service paths have no route, so letting them through ends in the gateway's 404 (docs/api.md §10)
                 .requestMatchers("/internal/**", "/api/drivers/*/reserve").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/drivers/nearby").hasRole("PASSENGER")
+                // Every method, not only GET: a backend answers HEAD with its GET handler, so a GET-only rule
+                // would let any role run the search with HEAD
+                .requestMatchers("/api/drivers/nearby").hasRole("PASSENGER")
                 .requestMatchers(HttpMethod.PATCH, "/api/drivers/*/status", "/api/drivers/*/location").hasRole("DRIVER")
                 .requestMatchers(HttpMethod.POST, "/api/trips", "/api/trips/*/cancel").hasRole("PASSENGER")
                 .requestMatchers(HttpMethod.POST,
