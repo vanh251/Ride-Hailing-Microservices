@@ -1,5 +1,6 @@
 package com.example.apigateway;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Value;
@@ -9,16 +10,19 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Checks which paths the gateway routes (docs/api.md §10). Every backend points at a closed port, so a routed
  * request fails with 5xx while a path without a route gets the gateway's own 404.
+ * Protected routes are called with a token of a role the route allows, so the security layer lets them through.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
+                "jwt.secret=" + TestTokens.TEST_SECRET,
                 "IDENTITY_SERVICE_URL=http://localhost:1",
                 "DRIVER_SERVICE_URL=http://localhost:1",
                 "TRIP_SERVICE_URL=http://localhost:1",
@@ -29,6 +33,8 @@ import static org.assertj.core.api.Assertions.assertThat;
         })
 class GatewayRoutingTest {
 
+    private static final String NO_TOKEN = "NONE";
+
     private final HttpClient httpClient = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .build();
@@ -36,46 +42,56 @@ class GatewayRoutingTest {
     @Value("${local.server.port}")
     private int port;
 
-    @ParameterizedTest(name = "{0} {1}")
+    @ParameterizedTest(name = "{0} {1} as {2}")
     @CsvSource({
-            "POST,   /api/auth/login",
-            "POST,   /api/auth/register/passenger",
-            "POST,   /api/auth/register/driver",
-            "GET,    /api/users/u1",
-            "GET,    /api/drivers/d1",
-            "GET,    /api/drivers/available",
-            "GET,    /api/drivers/nearby",
-            "PATCH,  /api/drivers/d1/status",
-            "PATCH,  /api/drivers/d1/location",
-            "POST,   /api/trips",
-            "GET,    /api/trips/t1",
-            "POST,   /api/trips/t1/accept",
-            "POST,   /api/matching/r1/match",
-            "POST,   /api/pricing/quote",
-            "POST,   /api/payments/t1/charge",
-            "GET,    /api/payments/t1",
-            "GET,    /api/notifications"
+            "POST,   /api/auth/login,              NONE",
+            "POST,   /api/auth/register/passenger, NONE",
+            "POST,   /api/auth/register/driver,    NONE",
+            "GET,    /api/users/u1,                PASSENGER",
+            "GET,    /api/drivers/d1,              DRIVER",
+            "GET,    /api/drivers/available,       NONE",
+            "GET,    /api/drivers/nearby,          PASSENGER",
+            "PATCH,  /api/drivers/d1/status,       DRIVER",
+            "PATCH,  /api/drivers/d1/location,     DRIVER",
+            "POST,   /api/trips,                   PASSENGER",
+            "GET,    /api/trips/t1,                PASSENGER",
+            "POST,   /api/trips/t1/accept,         DRIVER",
+            "POST,   /api/matching/r1/match,       PASSENGER",
+            "POST,   /api/pricing/quote,           PASSENGER",
+            "POST,   /api/payments/t1/charge,      PASSENGER",
+            "GET,    /api/payments/t1,             PASSENGER",
+            "GET,    /api/notifications,           PASSENGER"
     })
-    void route_publicPath_forwardedToBackend(String method, String path) throws Exception {
-        assertThat(send(method, path)).isNotEqualTo(404);
+    void route_publicPath_forwardedToBackend(String method, String path, String role) throws Exception {
+        assertThat(send(method, path, role)).isNotIn(401, 403, 404);
     }
 
-    @ParameterizedTest(name = "{0} {1}")
+    @ParameterizedTest(name = "{0} {1} as {2}")
     @CsvSource({
-            "POST,   /api/drivers/d1/reserve",
-            "DELETE, /api/drivers/d1/reserve",
-            "POST,   /internal/drivers",
-            "DELETE, /internal/drivers",
-            "GET,    /api/unknown"
+            "POST,   /api/drivers/d1/reserve, NONE",
+            "DELETE, /api/drivers/d1/reserve, NONE",
+            "POST,   /api/drivers/d1/reserve, DRIVER",
+            "DELETE, /api/drivers/d1/reserve, PASSENGER",
+            "POST,   /internal/drivers,       NONE",
+            "DELETE, /internal/drivers,       NONE",
+            "GET,    /api/unknown,            PASSENGER"
     })
-    void route_internalOrUnknownPath_returns404(String method, String path) throws Exception {
-        assertThat(send(method, path)).isEqualTo(404);
+    void route_internalOrUnknownPath_returns404(String method, String path, String role) throws Exception {
+        assertThat(send(method, path, role)).isEqualTo(404);
     }
 
-    private int send(String method, String path) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
-                .method(method, HttpRequest.BodyPublishers.noBody())
-                .build();
-        return httpClient.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+    @Test
+    void route_unknownPathWithoutToken_returns401() throws Exception {
+        assertThat(send("GET", "/api/unknown", NO_TOKEN)).isEqualTo(401);
+    }
+
+    // role NONE sends no token
+    private int send(String method, String path, String role) throws Exception {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                .method(method, HttpRequest.BodyPublishers.noBody());
+        if (!NO_TOKEN.equals(role)) {
+            builder.header("Authorization", TestTokens.bearer(TestTokens.token(UUID.randomUUID(), role)));
+        }
+        return httpClient.send(builder.build(), HttpResponse.BodyHandlers.discarding()).statusCode();
     }
 }

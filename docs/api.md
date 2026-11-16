@@ -26,21 +26,46 @@
 
 ## 1. Authentication
 
-All requests to backend services (except `/api/auth/register/passenger`, `/api/auth/register/driver` and `/api/auth/login`) require:
+All requests through the gateway, except the public routes listed below, require:
 
 ```
 Authorization: Bearer <accessToken>
 ```
 
-**Token format:** JWT (HS256), issued by Identity Service.  
-**Token expiry:** 24 hours (configurable via `JWT_EXPIRATION_MS`).
+**Token format:** JWT (HS256), issued by Identity Service at `POST /api/auth/login`. Claims: `sub` = user id, `role`, `iat`, `exp`.  
+**Token expiry:** 24 hours (configurable via `JWT_EXPIRATION_MS`). There is no refresh token: after expiry the client logs in again.  
+**Signing key:** `JWT_SECRET` (Base64, at least 256 bits), the same value in identity-service, api-gateway and driver-service. A service does not start with a key that is not Base64 or is shorter than 256 bits.
+
+The token is read only from the `Authorization` header with the scheme written `Bearer`. A token in the query string or a cookie, `Basic` credentials, or a token without the scheme count as no token.
+
+How the whole system is protected, what is tested and the known limitations are described in [security.md](security.md).
+
+### Verification at the API Gateway
+
+The gateway verifies the token (signature, expiry, `sub` is a UUID, `role` is a known role) before it routes a request, and checks the role for the endpoints marked PASSENGER or DRIVER below (the full list is in §10). "Own resource" checks stay in the backend service. identity-service and driver-service verify the token again themselves; trip, matching, pricing, payment and notification rely on the gateway.
+
+| Case | Response |
+|---|---|
+| No `Authorization: Bearer` header on a protected route | `401 MISSING_TOKEN` |
+| Bad signature, malformed token, missing `sub`/`role`, unknown role | `401 INVALID_TOKEN` |
+| Expired token | `401 TOKEN_EXPIRED` |
+| Valid token, role not allowed on the endpoint | `403 ACCESS_DENIED` |
+
+The `401` and `403` answers use the standard error body of §8 with the `code` above; a `401` also carries `WWW-Authenticate: Bearer`.
+
+Routes that need no token at the gateway: `POST /api/auth/register/passenger`, `POST /api/auth/register/driver`, `POST /api/auth/login`, `GET /api/drivers/available` and `/actuator/**`. They are public only for that method and exact path: `GET /api/auth/login` or `POST /api/auth/refresh`, for example, need a token. An invalid token on a public route is ignored, the request goes through as anonymous.
+
+Endpoints marked "internal" that the gateway still routes (`/api/matching/**`, `POST /api/pricing/final`, `POST /api/payments/{tripId}/charge`, `POST /api/payments/{tripId}/refund`) need a valid token of any role at the gateway; no role rule is applied to them yet.
+
+**`X-User-Id`:** for an authenticated request the gateway forwards the header `X-User-Id` = the token's `sub` (the user id) to the backend, together with the original `Authorization` header. An `X-User-Id` sent by the client is always dropped, on public routes too, so a backend behind the gateway can trust the header: it is either absent (anonymous request) or the verified user id.
 
 ### Role-based Access
 
 | Role | Permissions |
 |---|---|
-| `PASSENGER` | Create ride, cancel own ride, view own trip |
-| `DRIVER` | Update own status, update own location, accept/reject/start/complete trip |
+| `PASSENGER` | Search nearby drivers, create ride, cancel own ride, view own trip |
+| `DRIVER` | Update own status, update own location, accept/start/complete trip |
+| `ADMIN` | No endpoint is reserved for `ADMIN` and it cannot be self-registered. An `ADMIN` token passes the "any role" endpoints and gets `403` on the PASSENGER-only and DRIVER-only ones |
 
 ---
 
@@ -946,6 +971,7 @@ Returns the latest payment of the trip. **Errors:** `400 INVALID_PARAMETER` (not
 | `Content-Type` | Yes (for POST/PATCH) | `application/json` |
 | `X-Correlation-ID` | No (auto-generated if absent) | Trace ID for distributed tracing |
 | `X-Request-ID` | No | Unique per-request ID |
+| `X-User-Id` | Set by the gateway, never by clients | User id (`sub`) of the verified token; a value sent by the client is dropped (§1) |
 | `X-Idempotency-Key` | Required for payment charge (or `idempotencyKey` in the body) | Prevents duplicate operations |
 | `X-Internal-Api-Key` | Required for `/internal/**` (service-to-service only) | Shared secret `INTERNAL_API_KEY`; never sent by clients |
 
@@ -1022,8 +1048,40 @@ All client requests enter via `http://localhost:8080`.
 | `/api/pricing/**` | pricing-service | `http://pricing-service:8085/api/pricing/**` |
 | `/api/payments/**` | payment-service | `http://payment-service:8086/api/payments/**` |
 | `/api/notifications/**` | notification-service | `http://notification-service:8087/api/notifications/**` |
-| `/actuator/health` | api-gateway | (local) |
+| `/actuator/health`, `/actuator/info`, `/actuator/prometheus` | api-gateway | (local) |
 
 > No `lb://` scheme is used. Service discovery is via Docker DNS only.
 > `/internal/**` (service-to-service APIs) is intentionally **not** routed by the gateway.
 > `POST`/`DELETE /api/drivers/{id}/reserve` is **not** routed either (gateway returns `404`): only Matching Service calls it, directly at `http://driver-service:8082`.
+> The gateway verifies the JWT before routing (§1): any other path without a valid token gets `401`, including paths that have no route.
+> Swagger UI and `/v3/api-docs` of the services are not routed: open them on the service's own port (e.g. `http://localhost:8081/swagger-ui.html`).
+
+### Access rules at the gateway
+
+Checked in this order; the first matching line applies.
+
+| Method | Path | Access |
+|---|---|---|
+| any | `/actuator/**` | Public (only `health`, `info`, `prometheus` exist) |
+| POST | `/api/auth/register/passenger`, `/api/auth/register/driver`, `/api/auth/login` | Public |
+| GET | `/api/drivers/available` | Public (see §3) |
+| any | `/internal/**`, `/api/drivers/*/reserve` | Not routed: `404` |
+| any | `/api/drivers/nearby` | `PASSENGER` |
+| PATCH | `/api/drivers/*/status`, `/api/drivers/*/location` | `DRIVER` |
+| POST | `/api/trips`, `/api/trips/*/cancel` | `PASSENGER` |
+| POST | `/api/trips/*/accept`, `/api/trips/*/start`, `/api/trips/*/complete` | `DRIVER` |
+| any | everything else | Any valid token (`PASSENGER`, `DRIVER` or `ADMIN`) |
+
+### What the gateway adds and answers itself
+
+| Situation | Behaviour |
+|---|---|
+| Every request | `X-Correlation-ID` is generated when the client sent none, forwarded to the backend and returned in the response |
+| Authenticated request | `X-User-Id` = token `sub` is forwarded; the client's own `X-User-Id` is dropped (§1) |
+| Missing / invalid / expired token, wrong role | `401` / `403` with the standard error body and `code` (§1); the backend is not called |
+| Valid token, path without a route | `404` |
+| Path not in normal form (`..`, `//`, `;`, encoded `/` or `.`) | `400`, with or without a token; the backend is not called |
+| Backend unreachable | `500` with Spring's default error body (`timestamp`, `status`, `error`, `path`; no `code`) |
+| Cross-origin browser request | No CORS headers are sent, so a page on another origin cannot read the answer |
+
+The gateway keeps no session and sets no cookie: every request is authenticated by its own token.
