@@ -46,6 +46,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class GatewaySecurityTest {
 
     private static final String USER_ID_HEADER = "X-User-Id";
+    private static final String USER_ROLE_HEADER = "X-User-Role";
     private static final UUID USER_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
     private static final String FORGED_USER_ID = "99999999-9999-4999-8999-999999999999";
 
@@ -261,7 +262,23 @@ class GatewaySecurityTest {
         Headers headers = BACKEND_HEADERS.get();
         assertThat(headers).isNotNull();
         assertThat(headers.get(USER_ID_HEADER)).containsExactly(USER_ID.toString());
+        assertThat(headers.get(USER_ROLE_HEADER)).containsExactly("PASSENGER");
         assertThat(headers.getFirst("Authorization")).isEqualTo(TestTokens.bearer(token));
+    }
+
+    @Test
+    @DisplayName("A client-supplied role is replaced by the verified token role")
+    void authenticatedRequest_forgedRoleHeader_isReplacedByTokenRole() throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/trips"))
+                .header("Authorization", TestTokens.bearer(TestTokens.token(USER_ID, "PASSENGER")))
+                .header(USER_ROLE_HEADER, "DRIVER")
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(BACKEND_HEADERS.get().get(USER_ROLE_HEADER)).containsExactly("PASSENGER");
     }
 
     @Test

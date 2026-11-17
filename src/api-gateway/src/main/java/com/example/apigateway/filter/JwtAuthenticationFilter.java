@@ -31,6 +31,7 @@ import java.util.UUID;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     public static final String USER_ID_HEADER = "X-User-Id";
+    public static final String USER_ROLE_HEADER = "X-User-Role";
     public static final String JWT_ERROR_ATTRIBUTE = JwtAuthenticationFilter.class.getName() + ".error";
     public static final String TOKEN_EXPIRED = "TOKEN_EXPIRED";
     public static final String INVALID_TOKEN = "INVALID_TOKEN";
@@ -45,11 +46,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        UUID userId = authenticate(request);
-        filterChain.doFilter(new UserIdRequestWrapper(request, userId), response);
+        UsernamePasswordAuthenticationToken authentication = authenticate(request);
+        filterChain.doFilter(new VerifiedUserHeadersRequestWrapper(request, authentication), response);
     }
 
-    private UUID authenticate(HttpServletRequest request) {
+    private UsernamePasswordAuthenticationToken authenticate(HttpServletRequest request) {
         String header = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (header == null || !header.startsWith(BEARER_PREFIX)) {
             return null;
@@ -61,7 +62,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             SecurityContext context = SecurityContextHolder.createEmptyContext();
             context.setAuthentication(authentication);
             SecurityContextHolder.setContext(context);
-            return (UUID) authentication.getPrincipal();
+            return authentication;
         } catch (ExpiredJwtException ex) {
             log.warn("Rejected expired JWT on path {}", request.getRequestURI());
             request.setAttribute(JWT_ERROR_ATTRIBUTE, TOKEN_EXPIRED);
@@ -83,19 +84,27 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 List.of(new SimpleGrantedAuthority(ROLE_PREFIX + role)));
     }
 
-    private static final class UserIdRequestWrapper extends HttpServletRequestWrapper {
+    private static final class VerifiedUserHeadersRequestWrapper extends HttpServletRequestWrapper {
 
         private final String userId;
+        private final String userRole;
 
-        private UserIdRequestWrapper(HttpServletRequest request, UUID userId) {
+        private VerifiedUserHeadersRequestWrapper(HttpServletRequest request,
+                UsernamePasswordAuthenticationToken authentication) {
             super(request);
-            this.userId = userId != null ? userId.toString() : null;
+            this.userId = authentication != null ? authentication.getPrincipal().toString() : null;
+            this.userRole = authentication != null
+                    ? authentication.getAuthorities().iterator().next().getAuthority().substring(ROLE_PREFIX.length())
+                    : null;
         }
 
         @Override
         public String getHeader(String name) {
             if (USER_ID_HEADER.equalsIgnoreCase(name)) {
                 return userId;
+            }
+            if (USER_ROLE_HEADER.equalsIgnoreCase(name)) {
+                return userRole;
             }
             return super.getHeader(name);
         }
@@ -105,6 +114,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (USER_ID_HEADER.equalsIgnoreCase(name)) {
                 return userId != null ? Collections.enumeration(List.of(userId)) : Collections.emptyEnumeration();
             }
+            if (USER_ROLE_HEADER.equalsIgnoreCase(name)) {
+                return userRole != null ? Collections.enumeration(List.of(userRole)) : Collections.emptyEnumeration();
+            }
             return super.getHeaders(name);
         }
 
@@ -112,8 +124,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         public Enumeration<String> getHeaderNames() {
             List<String> names = Collections.list(super.getHeaderNames());
             names.removeIf(USER_ID_HEADER::equalsIgnoreCase);
+            names.removeIf(USER_ROLE_HEADER::equalsIgnoreCase);
             if (userId != null) {
                 names.add(USER_ID_HEADER);
+            }
+            if (userRole != null) {
+                names.add(USER_ROLE_HEADER);
             }
             return Collections.enumeration(names);
         }
