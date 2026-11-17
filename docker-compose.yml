@@ -254,6 +254,7 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres_secure_password_123}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-local-dev-internal-api-key}
     depends_on:
       trip-db:
         condition: service_healthy
@@ -284,6 +285,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres_secure_password_123}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       DRIVER_SERVICE_URL: http://driver-service:8082
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-local-dev-internal-api-key}
     depends_on:
       matching-db:
         condition: service_healthy
