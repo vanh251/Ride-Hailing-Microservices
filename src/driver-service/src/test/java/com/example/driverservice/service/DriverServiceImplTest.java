@@ -306,9 +306,9 @@ class DriverServiceImplTest {
     @Test
     @DisplayName("releaseReservation does not look the driver up when a reservation was released")
     void releaseReservation_reservedDriver_releases() {
-        when(driverRepository.releaseReservation(eq(USER_ID), any(Instant.class))).thenReturn(1);
+        when(driverRepository.releaseReservation(eq(USER_ID), eq(PASSENGER_ID), any(Instant.class))).thenReturn(1);
 
-        driverService.releaseReservation(USER_ID);
+        driverService.releaseReservation(USER_ID, PASSENGER_ID);
 
         verify(driverRepository, never()).existsById(any());
     }
@@ -318,13 +318,14 @@ class DriverServiceImplTest {
     void releaseReservation_driverNotReserved_doesNothing() {
         when(driverRepository.existsById(USER_ID)).thenReturn(true);
 
-        assertDoesNotThrow(() -> driverService.releaseReservation(USER_ID));
+        assertDoesNotThrow(() -> driverService.releaseReservation(USER_ID, PASSENGER_ID));
     }
 
     @Test
     @DisplayName("releaseReservation throws 404 DRIVER_NOT_FOUND for an unknown driver")
     void releaseReservation_unknownDriver_throwsNotFound() {
-        BusinessException ex = assertThrows(BusinessException.class, () -> driverService.releaseReservation(USER_ID));
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> driverService.releaseReservation(USER_ID, PASSENGER_ID));
 
         assertEquals(HttpStatus.NOT_FOUND, ex.getStatus());
         assertEquals("DRIVER_NOT_FOUND", ex.getCode());

@@ -47,6 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class DriverSecurityTest {
 
     private static final UUID DRIVER_ID = UUID.fromString("d0000000-0000-4000-8000-000000000001");
+    private static final UUID TRIP_ID = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
 
     @Autowired
     private MockMvc mockMvc;
@@ -64,13 +65,13 @@ class DriverSecurityTest {
         return "{\"status\": \"" + status + "\"}";
     }
 
-    // POST carries the reserve body from docs/api.md; DELETE has none
+    // POST carries the reserve body from docs/api.md; DELETE carries tripId in the query
     private static MockHttpServletRequestBuilder reserveRequest(String method) {
         MockHttpServletRequestBuilder builder = request(HttpMethod.valueOf(method), "/api/drivers/{id}/reserve", DRIVER_ID);
         return "POST".equals(method)
                 ? builder.contentType(MediaType.APPLICATION_JSON)
                         .content("{\"tripId\": \"" + UUID.randomUUID() + "\", \"expectedVersion\": 3}")
-                : builder;
+                : builder.param("tripId", TRIP_ID.toString());
     }
 
     @Test
@@ -239,7 +240,7 @@ class DriverSecurityTest {
     @Test
     @DisplayName("DELETE /reserve with the internal key and no token releases the driver (204)")
     void release_withApiKey_returns204() throws Exception {
-        when(driverRepository.releaseReservation(eq(DRIVER_ID), any(Instant.class))).thenReturn(1);
+        when(driverRepository.releaseReservation(eq(DRIVER_ID), eq(TRIP_ID), any(Instant.class))).thenReturn(1);
 
         mockMvc.perform(reserveRequest("DELETE")
                         .header(InternalApiKeyInterceptor.INTERNAL_API_KEY_HEADER, "test-internal-api-key"))

@@ -45,12 +45,14 @@ public interface DriverRepository extends JpaRepository<Driver, UUID> {
                 @Param("expectedVersion") int expectedVersion, @Param("reservedUntil") Instant reservedUntil,
                 @Param("now") Instant now);
 
-    /** RESERVED -> AVAILABLE for one driver. Returns 0 when the driver is not RESERVED or does not exist. */
+    /** RESERVED -> AVAILABLE only for the owning trip. Returns 0 for a different trip or status. */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE Driver d SET d.status = com.example.driverservice.entity.DriverStatus.AVAILABLE, "
             + "d.reservedForTrip = null, d.reservedUntil = null, d.version = d.version + 1, d.updatedAt = :now "
-            + "WHERE d.driverId = :driverId AND d.status = com.example.driverservice.entity.DriverStatus.RESERVED")
-    int releaseReservation(@Param("driverId") UUID driverId, @Param("now") Instant now);
+            + "WHERE d.driverId = :driverId AND d.status = com.example.driverservice.entity.DriverStatus.RESERVED "
+            + "AND d.reservedForTrip = :tripId")
+    int releaseReservation(@Param("driverId") UUID driverId, @Param("tripId") UUID tripId,
+                           @Param("now") Instant now);
 
     /** RESERVED -> AVAILABLE for every driver whose lease ended before {@code now}. Returns the drivers released. */
     @Modifying(clearAutomatically = true, flushAutomatically = true)

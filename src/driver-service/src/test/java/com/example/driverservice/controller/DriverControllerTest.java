@@ -54,6 +54,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class DriverControllerTest {
 
     private static final UUID DRIVER_ID = UUID.fromString("d0000000-0000-4000-8000-000000000001");
+    private static final UUID TRIP_ID = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
 
     private MockMvc mockMvc;
 
@@ -359,20 +360,20 @@ class DriverControllerTest {
     @Test
     @DisplayName("DELETE /api/drivers/{id}/reserve returns 204 without a body")
     void releaseReservation_validRequest_returns204() throws Exception {
-        mockMvc.perform(delete("/api/drivers/{id}/reserve", DRIVER_ID))
+        mockMvc.perform(delete("/api/drivers/{id}/reserve", DRIVER_ID).param("tripId", TRIP_ID.toString()))
                 .andExpect(status().isNoContent())
                 .andExpect(content().string(""));
 
-        verify(driverService).releaseReservation(DRIVER_ID);
+        verify(driverService).releaseReservation(DRIVER_ID, TRIP_ID);
     }
 
     @Test
     @DisplayName("DELETE /api/drivers/{id}/reserve for an unknown driver returns 404 DRIVER_NOT_FOUND")
     void releaseReservation_unknownDriver_returns404() throws Exception {
         doThrow(new com.example.driverservice.exception.ResourceNotFoundException("Driver not found", "DRIVER_NOT_FOUND"))
-                .when(driverService).releaseReservation(DRIVER_ID);
+                .when(driverService).releaseReservation(DRIVER_ID, TRIP_ID);
 
-        mockMvc.perform(delete("/api/drivers/{id}/reserve", DRIVER_ID))
+        mockMvc.perform(delete("/api/drivers/{id}/reserve", DRIVER_ID).param("tripId", TRIP_ID.toString()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("DRIVER_NOT_FOUND"));
     }

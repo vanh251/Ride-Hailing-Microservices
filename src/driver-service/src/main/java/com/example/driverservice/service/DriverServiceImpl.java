@@ -253,16 +253,16 @@ public class DriverServiceImpl implements DriverService {
 
     @Override
     @Transactional
-    public void releaseReservation(UUID driverId) {
-        if (driverRepository.releaseReservation(driverId, Instant.now()) == 1) {
-            log.info("Driver reservation released driverId={}", driverId);
+    public void releaseReservation(UUID driverId, UUID tripId) {
+        if (driverRepository.releaseReservation(driverId, tripId, Instant.now()) == 1) {
+            log.info("Driver reservation released driverId={}, tripId={}", driverId, tripId);
             return;
         }
         if (!driverRepository.existsById(driverId)) {
             throw new ResourceNotFoundException("Driver not found", "DRIVER_NOT_FOUND");
         }
         // Idempotent: the compensation may be repeated, or arrive after the lease already expired
-        log.info("No reservation to release for driverId={}", driverId);
+        log.info("No reservation to release for driverId={}, tripId={}", driverId, tripId);
     }
 
     @Override

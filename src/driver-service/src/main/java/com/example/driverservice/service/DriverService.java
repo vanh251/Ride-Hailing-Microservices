@@ -45,8 +45,8 @@ public interface DriverService {
      */
     ReserveDriverResponse reserveDriver(UUID driverId, UUID tripId, int expectedVersion);
 
-    /** RESERVED -> AVAILABLE (compensation). Does nothing when the driver is not RESERVED. */
-    void releaseReservation(UUID driverId);
+    /** RESERVED -> AVAILABLE only for tripId (compensation). A late release for another trip does nothing. */
+    void releaseReservation(UUID driverId, UUID tripId);
 
     /** RESERVED -> AVAILABLE for every driver whose lease has run out; returns how many were released. */
     int releaseExpiredReservations();

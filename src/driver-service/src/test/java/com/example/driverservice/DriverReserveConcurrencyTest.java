@@ -1,6 +1,7 @@
 package com.example.driverservice;
 
 import com.example.driverservice.dto.response.ReserveDriverResponse;
+import com.example.driverservice.controller.DriverController;
 import com.example.driverservice.entity.Driver;
 import com.example.driverservice.entity.DriverStatus;
 import com.example.driverservice.exception.ConflictException;
@@ -13,6 +14,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -30,6 +32,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Reservation compare-and-swap against a real database (H2 in PostgreSQL mode), the only driver-service test that
@@ -188,9 +192,10 @@ class DriverReserveConcurrencyTest {
     void releaseReservation_reservedDriver_canBeReservedAgainWithNewVersion() {
         Driver driver = savedDriver(DriverStatus.AVAILABLE);
         int version = driver.getVersion();
-        driverService.reserveDriver(driver.getDriverId(), UUID.randomUUID(), version);
+        UUID firstTrip = UUID.randomUUID();
+        driverService.reserveDriver(driver.getDriverId(), firstTrip, version);
 
-        driverService.releaseReservation(driver.getDriverId());
+        driverService.releaseReservation(driver.getDriverId(), firstTrip);
 
         Driver released = reload(driver);
         assertEquals(DriverStatus.AVAILABLE, released.getStatus());
@@ -208,11 +213,51 @@ class DriverReserveConcurrencyTest {
     void releaseReservation_busyDriver_leavesDriverUnchanged() {
         Driver driver = savedDriver(DriverStatus.BUSY);
 
-        driverService.releaseReservation(driver.getDriverId());
+        driverService.releaseReservation(driver.getDriverId(), UUID.randomUUID());
 
         Driver stored = reload(driver);
         assertEquals(DriverStatus.BUSY, stored.getStatus());
         assertEquals(driver.getVersion(), stored.getVersion());
+    }
+
+    @Test
+    @DisplayName("A late release for an old trip cannot clear the driver's newer reservation")
+    void releaseReservation_oldTrip_leavesNewTripReserved() throws Exception {
+        Driver driver = savedDriver(DriverStatus.AVAILABLE);
+        UUID oldTrip = UUID.randomUUID();
+        UUID newTrip = UUID.randomUUID();
+        driverService.reserveDriver(driver.getDriverId(), oldTrip, driver.getVersion());
+        transactionTemplate.executeWithoutResult(status ->
+                driverRepository.releaseExpiredReservations(Instant.now().plusSeconds(31)));
+        Driver available = reload(driver);
+        driverService.reserveDriver(driver.getDriverId(), newTrip, available.getVersion());
+        int newVersion = reload(driver).getVersion();
+
+        var mvc = MockMvcBuilders.standaloneSetup(new DriverController(driverService)).build();
+        mvc.perform(delete("/api/drivers/{id}/reserve", driver.getDriverId())
+                        .param("tripId", oldTrip.toString()))
+                .andExpect(status().isNoContent());
+
+        Driver stored = reload(driver);
+        assertEquals(DriverStatus.RESERVED, stored.getStatus());
+        assertEquals(newTrip, stored.getReservedForTrip());
+        assertEquals(newVersion, stored.getVersion());
+    }
+
+    @Test
+    @DisplayName("Release requires a tripId so an unscoped request cannot clear a reservation")
+    void releaseReservation_missingTripId_returns400AndLeavesReservation() throws Exception {
+        Driver driver = savedDriver(DriverStatus.AVAILABLE);
+        UUID trip = UUID.randomUUID();
+        driverService.reserveDriver(driver.getDriverId(), trip, driver.getVersion());
+
+        var mvc = MockMvcBuilders.standaloneSetup(new DriverController(driverService)).build();
+        mvc.perform(delete("/api/drivers/{id}/reserve", driver.getDriverId()))
+                .andExpect(status().isBadRequest());
+
+        Driver stored = reload(driver);
+        assertEquals(DriverStatus.RESERVED, stored.getStatus());
+        assertEquals(trip, stored.getReservedForTrip());
     }
 
     @Test

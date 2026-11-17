@@ -255,15 +255,16 @@ public class DriverController {
     }
 
     @Operation(summary = "Release a driver reservation (internal)",
-            description = "Compensating action RESERVED -> AVAILABLE. Idempotent: a driver that is not RESERVED is left "
-                    + "unchanged and the call still returns 204. Called by matching-service with the X-Internal-Api-Key "
+            description = "Compensating action RESERVED -> AVAILABLE only when the reservation belongs to tripId. "
+                    + "A repeated or late release leaves the driver unchanged and still returns 204. "
+                    + "Called by matching-service and trip-service with the X-Internal-Api-Key "
                     + "header instead of a JWT; not routed by the API Gateway.")
     @SecurityRequirements
     @Parameter(name = InternalApiKeyInterceptor.INTERNAL_API_KEY_HEADER, in = ParameterIn.HEADER, required = true,
             description = "Shared internal API key (INTERNAL_API_KEY)")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Driver is no longer reserved"),
-            @ApiResponse(responseCode = "400", description = "Id is not a UUID",
+            @ApiResponse(responseCode = "400", description = "Id or tripId is missing or not a UUID",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "Missing or wrong X-Internal-Api-Key",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
@@ -272,8 +273,9 @@ public class DriverController {
     })
     @DeleteMapping("/{id}/reserve")
     public ResponseEntity<Void> releaseReservation(
-            @Parameter(description = "Driver id (= the driver's user id)") @PathVariable UUID id) {
-        driverService.releaseReservation(id);
+            @Parameter(description = "Driver id (= the driver's user id)") @PathVariable UUID id,
+            @Parameter(description = "Trip that owns the reservation") @RequestParam UUID tripId) {
+        driverService.releaseReservation(id, tripId);
         return ResponseEntity.noContent().build();
     }
 }

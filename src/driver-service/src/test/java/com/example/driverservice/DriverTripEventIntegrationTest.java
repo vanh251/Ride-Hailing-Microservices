@@ -146,7 +146,7 @@ class DriverTripEventIntegrationTest {
     void onDriverAssigned_reservationAlreadyExpired_leavesDriverAvailable() {
         UUID tripId = UUID.randomUUID();
         Driver driver = reservedDriver(tripId);
-        driverService.releaseReservation(driver.getDriverId());
+        driverService.releaseReservation(driver.getDriverId(), tripId);
 
         driverTripEventService.onDriverAssigned(UUID.randomUUID(), tripId, driver.getDriverId());
 
@@ -259,11 +259,11 @@ class DriverTripEventIntegrationTest {
     void onTripCancelled_afterDeleteReserve_changesNothing() {
         UUID tripId = UUID.randomUUID();
         Driver driver = reservedDriver(tripId);
-        driverService.releaseReservation(driver.getDriverId());
+        driverService.releaseReservation(driver.getDriverId(), tripId);
         int releasedVersion = reload(driver).getVersion();
 
         driverTripEventService.onTripCancelled(UUID.randomUUID(), tripId);
-        driverService.releaseReservation(driver.getDriverId());
+        driverService.releaseReservation(driver.getDriverId(), tripId);
 
         Driver stored = reload(driver);
         assertReleased(stored);
