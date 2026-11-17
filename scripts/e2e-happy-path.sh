@@ -14,12 +14,20 @@ WAIT_SECONDS="${WAIT_SECONDS:-30}"
 KAFKA_CONTAINER="${KAFKA_CONTAINER:-kafka}"
 PASSWORD="E2e@123456"
 RUN_ID="$(date +%s)$RANDOM"
-CORRELATION_ID="e2e-$RUN_ID"
+CORRELATION_HEX="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+CORRELATION_ID="${CORRELATION_HEX:0:8}-${CORRELATION_HEX:8:4}-4${CORRELATION_HEX:13:3}-8${CORRELATION_HEX:17:3}-${CORRELATION_HEX:20:12}"
 
-# A pickup far from the seeded drivers (Hanoi), so the only AVAILABLE driver in range is the one registered here
-PICKUP='{"latitude":10.7769,"longitude":106.7009,"address":"Ben Thanh, Ho Chi Minh City"}'
-DESTINATION='{"latitude":10.7626,"longitude":106.6602,"address":"District 5, Ho Chi Minh City"}'
-DRIVER_LAT=10.7772; DRIVER_LNG=106.7012
+# Keep test runs in separate 0.2-degree cells, away from the seeded Hanoi drivers.
+# This prevents an AVAILABLE driver left by an earlier run from winning the new match.
+CELL=$((RUN_ID % 400))
+PICKUP_LAT=$(awk -v cell="$CELL" 'BEGIN {printf "%.4f", 9 + int(cell / 20) * 0.2}')
+PICKUP_LNG=$(awk -v cell="$CELL" 'BEGIN {printf "%.4f", 105 + (cell % 20) * 0.2}')
+DEST_LAT=$(awk -v lat="$PICKUP_LAT" 'BEGIN {printf "%.4f", lat + 0.02}')
+DEST_LNG=$(awk -v lng="$PICKUP_LNG" 'BEGIN {printf "%.4f", lng + 0.02}')
+DRIVER_LAT=$(awk -v lat="$PICKUP_LAT" 'BEGIN {printf "%.4f", lat + 0.0003}')
+DRIVER_LNG=$(awk -v lng="$PICKUP_LNG" 'BEGIN {printf "%.4f", lng + 0.0003}')
+PICKUP="{\"latitude\":$PICKUP_LAT,\"longitude\":$PICKUP_LNG,\"address\":\"E2E pickup\"}"
+DESTINATION="{\"latitude\":$DEST_LAT,\"longitude\":$DEST_LNG,\"address\":\"E2E destination\"}"
 
 STEP=0
 pass() { echo "  ✔ $*"; }
