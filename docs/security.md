@@ -10,15 +10,17 @@ is in [api.md](api.md) §1 and §10; this page explains the design behind it and
 client ──► api-gateway :8080 ──► identity / driver / trip / matching / pricing / payment / notification
             verifies JWT              identity and driver verify the JWT again
             checks the role           the other five trust the gateway
-            sets X-User-Id
+            sets X-User-Id and X-User-Role
 ```
 
 | Layer | What it enforces |
 |---|---|
-| api-gateway | Token signature, expiry and shape; role per endpoint; replaces `X-User-Id`; does not route service-to-service paths; refuses paths that are not in normal form |
+| api-gateway | Token signature, expiry and shape; role per endpoint; replaces `X-User-Id` and `X-User-Role`; does not route service-to-service paths; refuses paths that are not in normal form |
 | identity-service | Issues tokens; BCrypt password hashes; verifies the JWT on `/api/users/**` |
 | driver-service | Verifies the JWT, role rules, "own resource" rule (`{id}` must be the caller's user id); `X-Internal-Api-Key` on service-to-service endpoints |
-| trip, matching, pricing, payment, notification | No authentication of their own: they rely on the gateway. trip-service takes the caller from `X-User-Id`, which only the gateway may set |
+| trip-service | Uses gateway-provided `X-User-Id` and `X-User-Role` for client POST requests; requires `X-Internal-Api-Key` for internal calls |
+| matching-service | Requires `X-Internal-Api-Key` on its HTTP endpoints; consumes trip events from Kafka |
+| pricing, payment, notification | No authentication of their own: they rely on the gateway |
 
 A request is rejected at the first layer that fails it, and a rejected request never reaches a backend.
 
@@ -75,8 +77,8 @@ token's user id and answers `403 NOT_OWN_RESOURCE` when a driver tries to change
 or location. An off-duty driver's last position is shown only to that driver.
 
 **Caller identity for the other services.** For an authenticated request the gateway sets `X-User-Id` to
-the token's `sub`. Whatever the client sent in that header is dropped, on public routes too, so behind
-the gateway the header is either absent or the verified user id.
+the token's `sub` and `X-User-Role` to the token's `role`. Whatever the client sent in either header is
+dropped, on public routes too, so behind the gateway the headers are either absent or verified values.
 
 ## 4. Service-to-service calls
 
@@ -84,6 +86,8 @@ the gateway the header is either absent or the verified user id.
 |---|---|
 | identity-service → driver-service `/internal/drivers` | Header `X-Internal-Api-Key` |
 | matching-service → driver-service `POST`/`DELETE /api/drivers/{id}/reserve` | Header `X-Internal-Api-Key` |
+| matching-service → trip-service internal GET/cancel | Header `X-Internal-Api-Key` |
+| trip-service → driver-service `DELETE /api/drivers/{id}/reserve` | Header `X-Internal-Api-Key` |
 | Everything on Kafka | None: plaintext listener, reachable only inside the Docker network |
 
 `X-Internal-Api-Key` carries the shared secret `INTERNAL_API_KEY`. driver-service compares it in constant
@@ -113,7 +117,7 @@ All secrets come from environment variables (`.env`, not committed; `.env.exampl
 |---|---|---|
 | `JWT_SECRET` | identity-service, api-gateway, driver-service | Signs and verifies tokens; must be identical in all three |
 | `JWT_EXPIRATION_MS` | identity-service | Token lifetime |
-| `INTERNAL_API_KEY` | identity-service, driver-service, and matching-service once it sends the header | Service-to-service secret; must be identical |
+| `INTERNAL_API_KEY` | identity-service, driver-service, trip-service, matching-service | Service-to-service secret; must be identical |
 | `POSTGRES_PASSWORD` | All databases and their services | Database password |
 | `SEED_DATA_ENABLED`, `SEED_USER_PASSWORD` | identity-service, driver-service | Demo accounts and their shared password |
 | `GRAFANA_ADMIN_PASSWORD` | Grafana | Dashboard login |
@@ -128,7 +132,7 @@ Run with `./gradlew test` in the service's directory.
 
 | Test class | Service | Covers | Tests |
 |---|---|---|---|
-| `GatewaySecurityTest` | api-gateway | Missing, invalid and expired token; token without role, with unknown role, with a non-UUID subject; `403` for each wrong role; public routes; `X-User-Id` set from the token and a forged one replaced | 41 |
+| `GatewaySecurityTest` | api-gateway | Missing, invalid and expired token; token without role, with unknown role, with a non-UUID subject; `403` for each wrong role; public routes; `X-User-Id` and `X-User-Role` set from the token and forged values replaced | 42 |
 | `GatewaySecurityRegressionTest` | api-gateway | Attempts to get around the rules: `alg: none`, tampered role, cut-off signature; token in query string or cookie; `ADMIN` on role-restricted endpoints; `HEAD` on a GET-only rule; other methods and spellings of public paths; forged `X-User-Id` on public routes; path traversal and encoding tricks; internal paths with a valid token and the internal key; no session; error bodies that reveal nothing; actuator endpoints; CORS | 72 |
 | `GatewayRoutingTest` | api-gateway | Which paths are routed; internal and unknown paths answer `404` | 25 |
 | `AuthRegisterSecurityTest`, `AuthLoginSecurityTest`, `UserSecurityTest` | identity-service | Register and login are public; a `role` in the body is ignored; wrong password; missing, malformed, expired and wrongly signed token on `/api/users/{id}` | 19 |
@@ -183,7 +187,7 @@ Accepted for this project; each would have to be closed before a real deployment
 | Limitation | Consequence |
 |---|---|
 | `docker-compose.yml` publishes every service port (8081–8087), not only the gateway | A caller on the host can skip the gateway. trip, matching, pricing, payment and notification have no authentication of their own and accept any `X-User-Id` there |
-| `GET /api/drivers/available` is public | Anyone can list available drivers near a point: at most 50 per request, within 50 km, and with `page` every available driver in that circle, page by page. It stays public until matching-service has a credential |
+| `GET /api/drivers/available` is public | Anyone can list available drivers near a point: at most 50 per request, within 50 km, and with `page` every available driver in that circle, page by page. The endpoint remains public even though matching-service now has an internal key |
 | Routed "internal" endpoints (`/api/matching/**`, `POST /api/pricing/final`, `POST /api/payments/{tripId}/charge` and `/refund`) need only a valid token | Any logged-in user can call them |
 | Role rules are written per method and path; everything else needs only a valid token | A path or method that no rule names is forwarded for any role, and the backend answers `404` or `405` |
 | `GET /api/users/{id}` has no own-profile rule | Any logged-in user can read another user's name and email |

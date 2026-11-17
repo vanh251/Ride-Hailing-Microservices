@@ -59,6 +59,8 @@ Endpoints marked "internal" that the gateway still routes (`/api/matching/**`, `
 
 **`X-User-Id`:** for an authenticated request the gateway forwards the header `X-User-Id` = the token's `sub` (the user id) to the backend, together with the original `Authorization` header. An `X-User-Id` sent by the client is always dropped, on public routes too, so a backend behind the gateway can trust the header: it is either absent (anonymous request) or the verified user id.
 
+**`X-User-Role`:** the gateway forwards the verified token's `role` for authenticated requests. A value sent by the client is always dropped, including on public routes.
+
 ### Role-based Access
 
 | Role | Permissions |
@@ -556,16 +558,16 @@ The reservation is one atomic `UPDATE ... WHERE status = 'AVAILABLE' AND version
 
 ### DELETE /api/drivers/{id}/reserve
 
-Release a RESERVED driver reservation. Matching and Trip currently send `?tripId={tripId}`, but driver-service does not read that parameter and releases by driver ID alone. Scoping the release to the owning trip remains an integration task so a late request cannot release a newer reservation.
+Release a RESERVED driver reservation. The `tripId` query parameter is required: `DELETE /api/drivers/{id}/reserve?tripId={tripId}`. Driver-service releases the reservation only if its `reserved_for_trip` matches `tripId`. A late request for an older trip cannot release a newer reservation.
 
 **Auth required:** `X-Internal-Api-Key` (value of `INTERNAL_API_KEY`), no JWT. Called directly by Matching for compensation and by Trip for cancellation.
 
-**Response 204 No Content**, including an already released reservation. Driver owns the 30-second lease cleanup; Matching does not run another driver lease timer.
+**Response 204 No Content**, including an already released or non-matching reservation. Driver owns the 30-second lease cleanup; Matching does not run another driver lease timer.
 
-Only a `RESERVED` driver is released (`reserved_for_trip` and `reserved_until` cleared, `version + 1`). The call is idempotent: a driver in any other status is left unchanged and the response is still `204`, so repeating the compensation, or sending it after the lease already expired, is safe. A `BUSY` driver is released by the `TripCompleted` / `TripCancelled` events, not by this endpoint.
+Only a `RESERVED` driver owned by `tripId` is released (`reserved_for_trip` and `reserved_until` cleared, `version + 1`). The ownership and status conditions are checked in the same atomic database update. The call is idempotent: a driver in any other status or reserved for another trip is left unchanged and the response is still `204`. A `BUSY` driver is released by the `TripCompleted` / `TripCancelled` events, not by this endpoint.
 
 **Errors:**
-- `400 INVALID_PARAMETER` – `{id}` is not a UUID
+- `400` – `tripId` is missing or not a UUID, or `{id}` is not a UUID
 - `401 INVALID_INTERNAL_API_KEY` – Missing or wrong `X-Internal-Api-Key`
 - `404 DRIVER_NOT_FOUND` – No driver with this id
 
@@ -1042,6 +1044,7 @@ Returns the latest payment of the trip. **Errors:** `400 INVALID_PARAMETER` (not
 | `X-Correlation-ID` | No (auto-generated if absent) | Trace ID for distributed tracing |
 | `X-Request-ID` | No | Unique per-request ID |
 | `X-User-Id` | Set by the gateway, never by clients | User id (`sub`) of the verified token; a value sent by the client is dropped (§1) |
+| `X-User-Role` | Set by the gateway, never by clients | Role of the verified token; a value sent by the client is dropped (§1) |
 | `X-Idempotency-Key` | Required for payment charge (or `idempotencyKey` in the body) | Prevents duplicate operations |
 | `X-Internal-Api-Key` | Required for `/internal/**` and `POST`/`DELETE /api/drivers/{id}/reserve` (service-to-service only) | Shared secret `INTERNAL_API_KEY`; never sent by clients |
 
@@ -1155,7 +1158,7 @@ Checked in this order; the first matching line applies.
 | Situation | Behaviour |
 |---|---|
 | Every request | `X-Correlation-ID` is generated when the client sent none, forwarded to the backend and returned in the response |
-| Authenticated request | `X-User-Id` = token `sub` is forwarded; the client's own `X-User-Id` is dropped (§1). The gateway does not yet derive `X-User-Role` from the token. |
+| Authenticated request | `X-User-Id` = token `sub` and `X-User-Role` = token `role` are forwarded; client-supplied values for both headers are dropped (§1). |
 | Missing / invalid / expired token, wrong role | `401` / `403` with the standard error body and `code` (§1); the backend is not called |
 | Valid token, path without a route | `404` |
 | Path not in normal form (`..`, `//`, `;`, encoded `/` or `.`) | `400`, with or without a token; the backend is not called |
@@ -1168,7 +1171,7 @@ The gateway keeps no session and sets no cookie: every request is authenticated 
 
 These notes record Member 2 integration behavior. The gateway, driver-service and shared environment configuration must be verified together for full-system acceptance.
 
-- Gateway validates JWT/role and replaces client-supplied `X-User-Id`, but does not yet derive or replace `X-User-Role`. Trip requires both trusted headers on client POST requests; the missing role header blocks the current e2e script. Direct service ports are for development, not an authenticated alternative client entry point.
+- Gateway validates JWT/role and replaces client-supplied `X-User-Id` and `X-User-Role`. Trip requires these trusted headers on client POST requests. Direct service ports are for development, not an authenticated alternative client entry point.
 - Create ignores legacy body passengerId/estimatedFare; identity comes from the gateway, price and route estimate from Pricing `/quote`. A supplied X-Correlation-ID must be a UUID. Pricing failure returns 503, never a fallback price.
 - Accept requires ASSIGNED and the assigned driver. It never assigns SEARCHING or changes driverId. Start/complete require the same driver; cancellation requires the trip passenger. Invalid lifecycle state returns 409. Client cancellation supports SEARCHING/ASSIGNED and is idempotent once CANCELLED.
 - Complete calls Pricing `/final` before committing COMPLETED and publishes all eight required fields. W3 uses the quote distance as simulated trip distance and elapsed minutes (minimum 1), not GPS mileage. Pricing failure leaves IN_PROGRESS and emits no completion event.
