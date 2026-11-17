@@ -17,6 +17,11 @@ management:
     metrics:
       export:
         enabled: true
+  metrics:
+    distribution:
+      # Latency buckets for the P95 panel of the Grafana dashboard
+      percentiles-histogram:
+        http.server.requests: true
 
 logging:
   level:
