@@ -13,8 +13,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 /**
- * Guards /internal/** (service-to-service APIs). The API Gateway does not route these paths, but port 8082 is
- * published to the host, so callers must also present the shared key from INTERNAL_API_KEY.
+ * Guards the service-to-service APIs: /internal/** (identity-service) and /api/drivers/{id}/reserve (matching-service).
+ * The API Gateway does not route these paths, but port 8082 is published to the host, so callers must also present
+ * the shared key from INTERNAL_API_KEY.
  * Registered as an MVC interceptor so it matches paths exactly the way handler mapping does.
  */
 @Slf4j

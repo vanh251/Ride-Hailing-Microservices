@@ -10,11 +10,31 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # Fail fast when driver_db is down so a Kafka retry follows the 1s/2s/4s backoff of docs/events.md §8
+      # instead of waiting 30s per attempt
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:5000}
 
   jpa:
     hibernate:
       ddl-auto: ${JPA_DDL_AUTO:update}
     open-in-view: false
+
+  # Consumes trip-events: DriverAssigned, TripCompleted, TripCancelled (docs/events.md §5).
+  # The producer is only used to move failed records to trip-events.DLQ.
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+    consumer:
+      group-id: driver-service-group
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    listener:
+      ack-mode: manual_immediate
 
 # Verifies tokens issued by identity-service: must be the same JWT_SECRET (Base64) as identity-service
 jwt:
@@ -30,6 +50,14 @@ internal:
 app:
   seed:
     enabled: ${SEED_DATA_ENABLED:true}
+
+# Reservation lease (POST /api/drivers/{id}/reserve): a RESERVED driver that is not assigned within lease-seconds
+# returns to AVAILABLE; expiry-check-ms is how often expired leases are looked for.
+driver:
+  reservation:
+    lease-seconds: ${DRIVER_RESERVATION_LEASE_SECONDS:30}
+    expiry-check-ms: ${DRIVER_RESERVATION_EXPIRY_CHECK_MS:5000}
+    expiry-check-enabled: true
 
 management:
   endpoints:

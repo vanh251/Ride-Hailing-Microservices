@@ -1,5 +1,6 @@
 package com.example.driverservice.service;
 
+import com.example.driverservice.config.ReservationProperties;
 import com.example.driverservice.dto.request.CreateDriverRequest;
 import com.example.driverservice.dto.request.VehicleRequest;
 import com.example.driverservice.dto.response.AvailableDriverResponse;
@@ -9,6 +10,7 @@ import com.example.driverservice.dto.response.LocationResponse;
 import com.example.driverservice.dto.response.NearbyDriverResponse;
 import com.example.driverservice.dto.response.DriverProfileResponse;
 import com.example.driverservice.dto.response.DriverStatusResponse;
+import com.example.driverservice.dto.response.ReserveDriverResponse;
 import com.example.driverservice.entity.Driver;
 import com.example.driverservice.entity.DriverStatus;
 import com.example.driverservice.entity.Vehicle;
@@ -20,6 +22,7 @@ import com.example.driverservice.repository.DriverRepository;
 import com.example.driverservice.repository.VehicleRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -30,6 +33,7 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.Year;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -39,14 +43,17 @@ import java.util.UUID;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@EnableConfigurationProperties(ReservationProperties.class)
 public class DriverServiceImpl implements DriverService {
 
     private static final String DRIVER_PROFILE_EXISTS = "DRIVER_PROFILE_EXISTS";
     private static final String LICENSE_PLATE_ALREADY_REGISTERED = "LICENSE_PLATE_ALREADY_REGISTERED";
+    private static final String DRIVER_ALREADY_RESERVED = "DRIVER_ALREADY_RESERVED";
 
     private final DriverRepository driverRepository;
     private final VehicleRepository vehicleRepository;
     private final DriverMapper driverMapper;
+    private final ReservationProperties reservationProperties;
 
     @Override
     @Transactional
@@ -125,24 +132,26 @@ public class DriverServiceImpl implements DriverService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<AvailableDriverResponse> findAvailableDrivers(double latitude, double longitude, double radiusKm, int limit) {
-        return availableWithin(latitude, longitude, radiusKm).stream()
-                .limit(limit)
+    public List<AvailableDriverResponse> findAvailableDrivers(double latitude, double longitude, double radiusKm,
+                                                              int page, int size, boolean farthestFirst) {
+        return availableWithin(latitude, longitude, radiusKm, page, size, farthestFirst).stream()
                 .map(candidate -> driverMapper.toAvailableResponse(candidate.driver(), roundKm(candidate.distanceKm())))
                 .toList();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public List<NearbyDriverResponse> findNearbyDrivers(double latitude, double longitude, double radiusKm, int limit) {
-        return availableWithin(latitude, longitude, radiusKm).stream()
-                .limit(limit)
+    public List<NearbyDriverResponse> findNearbyDrivers(double latitude, double longitude, double radiusKm,
+                                                        int page, int size, boolean farthestFirst) {
+        return availableWithin(latitude, longitude, radiusKm, page, size, farthestFirst).stream()
                 .map(candidate -> driverMapper.toNearbyResponse(candidate.driver(), roundKm(candidate.distanceKm())))
                 .toList();
     }
 
-    // AVAILABLE drivers within radiusKm of the point, nearest first
-    private List<Candidate> availableWithin(double latitude, double longitude, double radiusKm) {
+    // One page of the AVAILABLE drivers within radiusKm of the point, ordered by distance
+    private List<Candidate> availableWithin(double latitude, double longitude, double radiusKm,
+                                            int page, int size, boolean farthestFirst) {
+        Comparator<Candidate> byDistance = Comparator.comparingDouble(Candidate::distanceKm);
         GeoUtils.BoundingBox box = GeoUtils.boundingBox(latitude, longitude, radiusKm);
         return driverRepository.findByStatusAndCurrentLatBetweenAndCurrentLngBetween(DriverStatus.AVAILABLE,
                         BigDecimal.valueOf(box.minLat()), BigDecimal.valueOf(box.maxLat()),
@@ -152,7 +161,10 @@ public class DriverServiceImpl implements DriverService {
                         driver.getCurrentLat().doubleValue(), driver.getCurrentLng().doubleValue())))
                 // The box corners are farther than the radius, so keep only drivers inside the circle
                 .filter(candidate -> candidate.distanceKm() <= radiusKm)
-                .sorted(Comparator.comparingDouble(Candidate::distanceKm))
+                .sorted(farthestFirst ? byDistance.reversed() : byDistance)
+                // long: page * size must not overflow for a very large page number
+                .skip((long) page * size)
+                .limit(size)
                 .toList();
     }
 
@@ -212,6 +224,55 @@ public class DriverServiceImpl implements DriverService {
         // Off duty, the last position is often the driver's home, so only the driver may see it
         boolean showLocation = driver.getStatus() != DriverStatus.OFFLINE || driverId.equals(callerId);
         return driverMapper.toDetailResponse(driver, activeVehicle, showLocation);
+    }
+
+    @Override
+    @Transactional
+    public ReserveDriverResponse reserveDriver(UUID driverId, UUID tripId, int expectedVersion) {
+        // reserved_until is TIMESTAMPTZ (microseconds); milliseconds keep the response equal to what is stored
+        Instant now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
+        Instant reservedUntil = now.plusSeconds(reservationProperties.leaseSeconds());
+
+        if (driverRepository.reserve(driverId, tripId, expectedVersion, reservedUntil, now) == 0) {
+            if (!driverRepository.existsById(driverId)) {
+                throw new ResourceNotFoundException("Driver not found", "DRIVER_NOT_FOUND");
+            }
+            log.info("Driver reservation rejected driverId={}, tripId={}, expectedVersion={}", driverId, tripId, expectedVersion);
+            throw new ConflictException("Driver is not available or was changed by another request", DRIVER_ALREADY_RESERVED);
+        }
+
+        log.info("Driver reserved driverId={}, tripId={}, reservedUntil={}", driverId, tripId, reservedUntil);
+        return ReserveDriverResponse.builder()
+                .driverId(driverId)
+                .status(DriverStatus.RESERVED)
+                .reservedForTrip(tripId)
+                .reservedUntil(reservedUntil)
+                .version(expectedVersion + 1)
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public void releaseReservation(UUID driverId) {
+        if (driverRepository.releaseReservation(driverId, Instant.now()) == 1) {
+            log.info("Driver reservation released driverId={}", driverId);
+            return;
+        }
+        if (!driverRepository.existsById(driverId)) {
+            throw new ResourceNotFoundException("Driver not found", "DRIVER_NOT_FOUND");
+        }
+        // Idempotent: the compensation may be repeated, or arrive after the lease already expired
+        log.info("No reservation to release for driverId={}", driverId);
+    }
+
+    @Override
+    @Transactional
+    public int releaseExpiredReservations() {
+        int released = driverRepository.releaseExpiredReservations(Instant.now());
+        if (released > 0) {
+            log.info("Reservation lease expired for {} driver(s), returned to AVAILABLE", released);
+        }
+        return released;
     }
 
     private static boolean isDriverSettable(DriverStatus status) {

@@ -45,6 +45,10 @@ spring:
               predicates:
                 - Path=/api/notifications/**
 
+# Verifies tokens issued by identity-service: must be the same JWT_SECRET (Base64) as identity-service
+jwt:
+  secret: ${JWT_SECRET:dGhpc19pc19hX3Zlcnlfc2VjdXJlX2tleV9mb3JfaHMyNTZfamF2YV9zcHJpbmdfYm9vdF9kczAzX3JpZGVfaGFpbGluZw==}
+
 management:
   endpoints:
     web:
