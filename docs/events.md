@@ -293,7 +293,7 @@ The driver has started the trip (picked up the passenger).
   "aggregateType": "Trip",
   "producer": "trip-service",
   "correlationId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "causationId": "e0000000-0000-4000-8000-000000000003",
+  "causationId": null,
   "schemaVersion": "1.0",
   "occurredAt": "2026-09-30T10:05:00Z",
   "payload": {
@@ -350,7 +350,7 @@ The driver has completed the trip (arrived at destination). Triggers payment pro
   "aggregateType": "Trip",
   "producer": "trip-service",
   "correlationId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "causationId": "e0000000-0000-4000-8000-000000000004",
+  "causationId": null,
   "schemaVersion": "1.0",
   "occurredAt": "2026-09-30T10:25:00Z",
   "payload": {
@@ -524,7 +524,7 @@ A trip has been cancelled by the passenger (or timeout).
 | notification-service | Notify passenger: "Trip cancelled" |
 | notification-service | Notify driver (if assigned): "Trip has been cancelled" |
 
-> **Two compensation paths (contract v1.1):** as SRS §13.2 requires, Trip Service also releases a reserved driver synchronously with `DELETE /api/drivers/{driverId}/reserve` before publishing this event. Both paths are safe to run together: each one acts only while `drivers.reserved_for_trip = tripId`, so whichever runs second finds nothing to release, logs and skips.
+> **Two compensation paths (contract v1.1; safe commit ordering clarified in M2 W3):** Trip Service commits cancellation and its outbox together, then attempts `DELETE /api/drivers/{driverId}/reserve?tripId={tripId}` in an after-commit callback before the HTTP request returns. It never releases externally for a cancellation that rolls back. The outbox relay and REST compensation may race after commit; both paths are safe because each acts only while `drivers.reserved_for_trip = tripId`, so the second finds nothing to release. REST failure is logged and the event/lease remain fallback cleanup paths.
 
 ---
 
@@ -544,7 +544,7 @@ Each consumer filters by `eventType` within its subscribed topics:
 
 | Consumer | Topic | EventTypes Consumed |
 |---|---|---|
-| matching-service | `trip-events` | `RideRequested` |
+| matching-service | `trip-events` | `RideRequested`, `TripCancelled` |
 | trip-service | `matching-events` | `DriverReserved` |
 | trip-service | `payment-events` | `PaymentSucceeded`, `PaymentFailed` |
 | payment-service | `trip-events` | `TripCompleted` |

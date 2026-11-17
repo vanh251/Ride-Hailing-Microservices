@@ -1,6 +1,8 @@
 package com.example.driverservice.service;
 
+import com.example.driverservice.config.ReservationProperties;
 import com.example.driverservice.dto.request.CreateDriverRequest;
+import com.example.driverservice.dto.response.ReserveDriverResponse;
 import com.example.driverservice.dto.request.VehicleRequest;
 import com.example.driverservice.dto.response.AvailableDriverResponse;
 import com.example.driverservice.dto.response.DriverDetailResponse;
@@ -58,6 +60,9 @@ class DriverServiceImplTest {
 
     @Spy
     private DriverMapper driverMapper = new DriverMapper();
+
+    @Spy
+    private ReservationProperties reservationProperties = new ReservationProperties(30);
 
     @InjectMocks
     private DriverServiceImpl driverService;
@@ -255,6 +260,85 @@ class DriverServiceImplTest {
         verify(driverRepository, never()).delete(any());
     }
 
+    // ---- POST / DELETE /api/drivers/{id}/reserve ----
+
+    @Test
+    @DisplayName("reserveDriver returns RESERVED, the trip, version + 1 and a 30 second lease when the CAS updates one row")
+    void reserveDriver_casUpdatesOneRow_returnsReservation() {
+        UUID tripId = UUID.randomUUID();
+        when(driverRepository.reserve(eq(USER_ID), eq(tripId), eq(5), any(Instant.class), any(Instant.class))).thenReturn(1);
+
+        ReserveDriverResponse response = driverService.reserveDriver(USER_ID, tripId, 5);
+
+        assertEquals(USER_ID, response.getDriverId());
+        assertEquals(DriverStatus.RESERVED, response.getStatus());
+        assertEquals(tripId, response.getReservedForTrip());
+        assertEquals(6, response.getVersion());
+        ArgumentCaptor<Instant> reservedUntil = ArgumentCaptor.forClass(Instant.class);
+        ArgumentCaptor<Instant> now = ArgumentCaptor.forClass(Instant.class);
+        verify(driverRepository).reserve(eq(USER_ID), eq(tripId), eq(5), reservedUntil.capture(), now.capture());
+        assertEquals(now.getValue().plusSeconds(30), reservedUntil.getValue());
+        assertEquals(reservedUntil.getValue(), response.getReservedUntil());
+    }
+
+    @Test
+    @DisplayName("reserveDriver throws 409 DRIVER_ALREADY_RESERVED when the CAS updates no row of an existing driver")
+    void reserveDriver_casUpdatesNoRow_throwsConflict() {
+        when(driverRepository.existsById(USER_ID)).thenReturn(true);
+
+        ConflictException ex = assertThrows(ConflictException.class,
+                () -> driverService.reserveDriver(USER_ID, UUID.randomUUID(), 5));
+
+        assertEquals("DRIVER_ALREADY_RESERVED", ex.getCode());
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+    }
+
+    @Test
+    @DisplayName("reserveDriver throws 404 DRIVER_NOT_FOUND for an unknown driver")
+    void reserveDriver_unknownDriver_throwsNotFound() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> driverService.reserveDriver(USER_ID, UUID.randomUUID(), 5));
+
+        assertEquals(HttpStatus.NOT_FOUND, ex.getStatus());
+        assertEquals("DRIVER_NOT_FOUND", ex.getCode());
+    }
+
+    @Test
+    @DisplayName("releaseReservation does not look the driver up when a reservation was released")
+    void releaseReservation_reservedDriver_releases() {
+        when(driverRepository.releaseReservation(eq(USER_ID), eq(PASSENGER_ID), any(Instant.class))).thenReturn(1);
+
+        driverService.releaseReservation(USER_ID, PASSENGER_ID);
+
+        verify(driverRepository, never()).existsById(any());
+    }
+
+    @Test
+    @DisplayName("releaseReservation is idempotent: a driver that is not RESERVED is not an error")
+    void releaseReservation_driverNotReserved_doesNothing() {
+        when(driverRepository.existsById(USER_ID)).thenReturn(true);
+
+        assertDoesNotThrow(() -> driverService.releaseReservation(USER_ID, PASSENGER_ID));
+    }
+
+    @Test
+    @DisplayName("releaseReservation throws 404 DRIVER_NOT_FOUND for an unknown driver")
+    void releaseReservation_unknownDriver_throwsNotFound() {
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> driverService.releaseReservation(USER_ID, PASSENGER_ID));
+
+        assertEquals(HttpStatus.NOT_FOUND, ex.getStatus());
+        assertEquals("DRIVER_NOT_FOUND", ex.getCode());
+    }
+
+    @Test
+    @DisplayName("releaseExpiredReservations returns the number of drivers released")
+    void releaseExpiredReservations_expiredLeases_returnsCount() {
+        when(driverRepository.releaseExpiredReservations(any(Instant.class))).thenReturn(2);
+
+        assertEquals(2, driverService.releaseExpiredReservations());
+    }
+
     // ---- GET /api/drivers/available ----
 
     private static Driver availableDriver(String name, double lat, double lng) {
@@ -280,7 +364,7 @@ class DriverServiceImplTest {
                 eq(DriverStatus.AVAILABLE), any(), any(), any(), any()))
                 .thenReturn(List.of(hangBai, corner, trangTien));
 
-        List<AvailableDriverResponse> result = driverService.findAvailableDrivers(21.0285, 105.8542, 5.0, 20);
+        List<AvailableDriverResponse> result = driverService.findAvailableDrivers(21.0285, 105.8542, 5.0, 0, 20, false);
 
         assertEquals(List.of("Trang Tien", "Hang Bai"), result.stream().map(AvailableDriverResponse::getFullName).toList());
         assertEquals(0.49, result.get(0).getDistanceKm());
@@ -301,7 +385,7 @@ class DriverServiceImplTest {
                 eq(DriverStatus.AVAILABLE), minLat.capture(), maxLat.capture(), minLng.capture(), maxLng.capture()))
                 .thenReturn(List.of());
 
-        driverService.findAvailableDrivers(21.0285, 105.8542, 5.0, 20);
+        driverService.findAvailableDrivers(21.0285, 105.8542, 5.0, 0, 20, false);
 
         GeoUtils.BoundingBox box = GeoUtils.boundingBox(21.0285, 105.8542, 5.0);
         assertEquals(box.minLat(), minLat.getValue().doubleValue(), 1e-12);
@@ -319,7 +403,7 @@ class DriverServiceImplTest {
                 eq(DriverStatus.AVAILABLE), any(), any(), any(), any()))
                 .thenReturn(List.of(hangBai, trangTien));
 
-        List<AvailableDriverResponse> result = driverService.findAvailableDrivers(21.0285, 105.8542, 5.0, 1);
+        List<AvailableDriverResponse> result = driverService.findAvailableDrivers(21.0285, 105.8542, 5.0, 0, 1, false);
 
         assertEquals(List.of("Trang Tien"), result.stream().map(AvailableDriverResponse::getFullName).toList());
     }
@@ -515,10 +599,66 @@ class DriverServiceImplTest {
                 eq(DriverStatus.AVAILABLE), any(), any(), any(), any()))
                 .thenReturn(List.of(hangBai, corner, trangTien, hangNgang));
 
-        List<NearbyDriverResponse> result = driverService.findNearbyDrivers(21.0285, 105.8542, 5.0, 2);
+        List<NearbyDriverResponse> result = driverService.findNearbyDrivers(21.0285, 105.8542, 5.0, 0, 2, false);
 
         assertEquals(List.of("Trang Tien", "Hang Ngang"), result.stream().map(NearbyDriverResponse::getFullName).toList());
         assertEquals(0.49, result.get(0).getDistanceKm());
         assertEquals(21.0250, result.get(0).getLocation().getLatitude());
+    }
+
+    // ---- pagination and sort of /available and /nearby (docs/api.md §8) ----
+
+    // Trang Tien 0.49 km, Hang Ngang 0.77 km, Hang Bai 1.08 km from the reference point
+    private void threeDriversInRadius() {
+        when(driverRepository.findByStatusAndCurrentLatBetweenAndCurrentLngBetween(
+                eq(DriverStatus.AVAILABLE), any(), any(), any(), any()))
+                .thenReturn(List.of(
+                        availableDriver("Hang Bai", 21.0190, 105.8520),
+                        availableDriver("Trang Tien", 21.0250, 105.8570),
+                        availableDriver("Hang Ngang", 21.0345, 105.8505)));
+    }
+
+    private List<String> availableNames(int page, int size, boolean farthestFirst) {
+        return driverService.findAvailableDrivers(21.0285, 105.8542, 5.0, page, size, farthestFirst).stream()
+                .map(AvailableDriverResponse::getFullName).toList();
+    }
+
+    @Test
+    @DisplayName("findAvailableDrivers returns the requested page: page 1 of size 2 holds the third nearest driver")
+    void findAvailableDrivers_secondPage_returnsNextDrivers() {
+        threeDriversInRadius();
+
+        assertEquals(List.of("Trang Tien", "Hang Ngang"), availableNames(0, 2, false));
+        assertEquals(List.of("Hang Bai"), availableNames(1, 2, false));
+    }
+
+    @Test
+    @DisplayName("findAvailableDrivers returns an empty list for a page after the last one")
+    void findAvailableDrivers_pageAfterLast_returnsEmptyList() {
+        threeDriversInRadius();
+
+        assertEquals(List.of(), availableNames(2, 2, false));
+        assertEquals(List.of(), availableNames(Integer.MAX_VALUE, 50, false));
+    }
+
+    @Test
+    @DisplayName("findAvailableDrivers sorted descending lists the farthest driver first, and pages in that order")
+    void findAvailableDrivers_farthestFirst_reversesOrder() {
+        threeDriversInRadius();
+
+        assertEquals(List.of("Hang Bai", "Hang Ngang", "Trang Tien"), availableNames(0, 20, true));
+        assertEquals(List.of("Trang Tien"), availableNames(1, 2, true));
+    }
+
+    @Test
+    @DisplayName("findNearbyDrivers pages and sorts the same way as findAvailableDrivers")
+    void findNearbyDrivers_pageAndSort_returnsRequestedPage() {
+        threeDriversInRadius();
+
+        List<NearbyDriverResponse> secondPage = driverService.findNearbyDrivers(21.0285, 105.8542, 5.0, 1, 1, false);
+        List<NearbyDriverResponse> farthest = driverService.findNearbyDrivers(21.0285, 105.8542, 5.0, 0, 1, true);
+
+        assertEquals(List.of("Hang Ngang"), secondPage.stream().map(NearbyDriverResponse::getFullName).toList());
+        assertEquals(List.of("Hang Bai"), farthest.stream().map(NearbyDriverResponse::getFullName).toList());
     }
 }

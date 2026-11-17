@@ -223,9 +223,15 @@ services:
       # Must be identity-service's JWT_SECRET: driver-service verifies the tokens it issues
       JWT_SECRET: ${JWT_SECRET:-dGhpc19pc19hX3Zlcnlfc2VjdXJlX2tleV9mb3JfaHMyNTZfamF2YV9zcHJpbmdfYm9vdF9kczAzX3JpZGVfaGFpbGluZw==}
       SEED_DATA_ENABLED: ${SEED_DATA_ENABLED:-true}
+      # Consumes trip-events: DriverAssigned, TripCompleted, TripCancelled (docs/events.md §5)
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       driver-db:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8082/actuator/health || exit 1"]
       interval: 15s
@@ -248,6 +254,7 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres_secure_password_123}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-local-dev-internal-api-key}
     depends_on:
       trip-db:
         condition: service_healthy
@@ -278,6 +285,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres_secure_password_123}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       DRIVER_SERVICE_URL: http://driver-service:8082
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-local-dev-internal-api-key}
     depends_on:
       matching-db:
         condition: service_healthy
@@ -381,6 +389,8 @@ services:
       - "${GATEWAY_PORT:-8080}:8080"
     environment:
       SERVER_PORT: 8080
+      # Must be identity-service's JWT_SECRET: the gateway verifies the tokens it issues
+      JWT_SECRET: ${JWT_SECRET:-dGhpc19pc19hX3Zlcnlfc2VjdXJlX2tleV9mb3JfaHMyNTZfamF2YV9zcHJpbmdfYm9vdF9kczAzX3JpZGVfaGFpbGluZw==}
       IDENTITY_SERVICE_URL: http://identity-service:8081
       DRIVER_SERVICE_URL: http://driver-service:8082
       TRIP_SERVICE_URL: http://trip-service:8083

@@ -13,6 +13,6 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(internalApiKeyInterceptor).addPathPatterns("/internal/**");
+        registry.addInterceptor(internalApiKeyInterceptor).addPathPatterns("/internal/**", "/api/drivers/*/reserve");
     }
 }

@@ -27,6 +27,18 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
 
+internal:
+  api-key: ${INTERNAL_API_KEY:}
+
+trip-service:
+  url: ${TRIP_SERVICE_URL:http://trip-service:8083}
+
+matching:
+  max-attempts: ${MATCHING_MAX_ATTEMPTS:3}
+  search-timeout-seconds: ${MATCHING_SEARCH_TIMEOUT_SECONDS:60}
+  search-radius-km: ${MATCHING_SEARCH_RADIUS_KM:5}
+  retry-interval-ms: ${MATCHING_RETRY_INTERVAL_MS:5000}
+
 driver-service:
   url: ${DRIVER_SERVICE_URL:http://driver-service:8082}
 

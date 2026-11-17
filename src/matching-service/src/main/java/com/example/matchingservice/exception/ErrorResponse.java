@@ -12,10 +12,19 @@ import java.time.Instant;
 @Builder
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class ErrorResponse {
+
     private Instant timestamp;
+
     private int status;
+
     private String error;
+
     private String message;
+
     private String path;
+
     private String correlationId;
+
+    private String code;
+
 }

@@ -4,28 +4,36 @@ import com.example.driverservice.config.InternalApiKeyInterceptor;
 import com.example.driverservice.entity.Driver;
 import com.example.driverservice.entity.DriverStatus;
 import com.example.driverservice.repository.DriverRepository;
+import com.example.driverservice.repository.ProcessedEventRepository;
 import com.example.driverservice.repository.VehicleRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -39,6 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class DriverSecurityTest {
 
     private static final UUID DRIVER_ID = UUID.fromString("d0000000-0000-4000-8000-000000000001");
+    private static final UUID TRIP_ID = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
 
     @Autowired
     private MockMvc mockMvc;
@@ -49,8 +58,20 @@ class DriverSecurityTest {
     @MockitoBean
     private VehicleRepository vehicleRepository;
 
+    @MockitoBean
+    private ProcessedEventRepository processedEventRepository;
+
     private static String statusBody(String status) {
         return "{\"status\": \"" + status + "\"}";
+    }
+
+    // POST carries the reserve body from docs/api.md; DELETE carries tripId in the query
+    private static MockHttpServletRequestBuilder reserveRequest(String method) {
+        MockHttpServletRequestBuilder builder = request(HttpMethod.valueOf(method), "/api/drivers/{id}/reserve", DRIVER_ID);
+        return "POST".equals(method)
+                ? builder.contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tripId\": \"" + UUID.randomUUID() + "\", \"expectedVersion\": 3}")
+                : builder.param("tripId", TRIP_ID.toString());
     }
 
     @Test
@@ -182,6 +203,61 @@ class DriverSecurityTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
     }
 
+    @ParameterizedTest(name = "{0} /api/drivers/id/reserve")
+    @ValueSource(strings = {"POST", "DELETE"})
+    @DisplayName("/reserve without X-Internal-Api-Key returns 401 INVALID_INTERNAL_API_KEY")
+    void reserve_withoutApiKey_returns401(String method) throws Exception {
+        mockMvc.perform(reserveRequest(method))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("INVALID_INTERNAL_API_KEY"));
+
+        verifyNoInteractions(driverRepository);
+    }
+
+    @ParameterizedTest(name = "{0} /api/drivers/id/reserve")
+    @ValueSource(strings = {"POST", "DELETE"})
+    @DisplayName("/reserve is not opened by a JWT: a DRIVER token without X-Internal-Api-Key is still 401")
+    void reserve_driverTokenWithoutApiKey_returns401(String method) throws Exception {
+        mockMvc.perform(reserveRequest(method)
+                        .header(HttpHeaders.AUTHORIZATION, TestTokens.bearer(TestTokens.token(DRIVER_ID, "DRIVER"))))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("INVALID_INTERNAL_API_KEY"));
+    }
+
+    @Test
+    @DisplayName("POST /reserve with the internal key and no token reserves the driver (200)")
+    void reserve_withApiKey_returns200() throws Exception {
+        when(driverRepository.reserve(eq(DRIVER_ID), any(UUID.class), eq(3), any(Instant.class), any(Instant.class)))
+                .thenReturn(1);
+
+        mockMvc.perform(reserveRequest("POST")
+                        .header(InternalApiKeyInterceptor.INTERNAL_API_KEY_HEADER, "test-internal-api-key"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RESERVED"))
+                .andExpect(jsonPath("$.version").value(4));
+    }
+
+    @Test
+    @DisplayName("DELETE /reserve with the internal key and no token releases the driver (204)")
+    void release_withApiKey_returns204() throws Exception {
+        when(driverRepository.releaseReservation(eq(DRIVER_ID), eq(TRIP_ID), any(Instant.class))).thenReturn(1);
+
+        mockMvc.perform(reserveRequest("DELETE")
+                        .header(InternalApiKeyInterceptor.INTERNAL_API_KEY_HEADER, "test-internal-api-key"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    @DisplayName("/reserve with a wrong internal key returns 401 INVALID_INTERNAL_API_KEY")
+    void reserve_wrongApiKey_returns401() throws Exception {
+        mockMvc.perform(reserveRequest("POST")
+                        .header(InternalApiKeyInterceptor.INTERNAL_API_KEY_HEADER, "not-the-key"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("INVALID_INTERNAL_API_KEY"));
+
+        verifyNoInteractions(driverRepository);
+    }
+
     @Test
     @DisplayName("PATCH location with a PASSENGER token returns 403 ACCESS_DENIED")
     void updateLocation_passengerToken_returns403() throws Exception {
@@ -241,5 +317,15 @@ class DriverSecurityTest {
                         .header(HttpHeaders.AUTHORIZATION, TestTokens.bearer(TestTokens.token(UUID.randomUUID(), "PASSENGER"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isArray());
+    }
+
+    @Test
+    @DisplayName("HEAD /api/drivers/nearby is answered by the GET handler, so it follows the same role rule: 403 with DRIVER")
+    void headNearby_driverToken_returns403AndRunsNoSearch() throws Exception {
+        mockMvc.perform(head("/api/drivers/nearby").param("latitude", "21.0285").param("longitude", "105.8542")
+                        .header(HttpHeaders.AUTHORIZATION, TestTokens.bearer(TestTokens.token(DRIVER_ID, "DRIVER"))))
+                .andExpect(status().isForbidden());
+
+        verifyNoInteractions(driverRepository);
     }
 }

@@ -298,6 +298,8 @@ Notification
 * [ ] Trip state machine
 * [ ] Concurrent request handling phiên bản đầu
 
+> Cập nhật triển khai M2 ngày 09/11/2026: source và test W3 nằm trên nhánh `feature/m2/week3-integration`; xem `docs/member2-week3-handoff.md`. Các ô nghiệm thu giữ chưa đánh dấu đến khi có reserve/Gateway của M1, cấu hình M3 và demo E2E toàn hệ thống.
+
 ### Member 3
 
 * [ ] Kafka producer

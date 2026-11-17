@@ -43,7 +43,12 @@ public class SecurityConfig {
                 ).permitAll()
                 // matching-service calls this without a token (it has no service credential yet)
                 .requestMatchers(HttpMethod.GET, "/api/drivers/available").permitAll()
-                .requestMatchers(HttpMethod.GET, "/api/drivers/nearby").hasRole("PASSENGER")
+                // Called by matching-service only; guarded by InternalApiKeyInterceptor instead of a JWT
+                .requestMatchers(HttpMethod.POST, "/api/drivers/*/reserve").permitAll()
+                .requestMatchers(HttpMethod.DELETE, "/api/drivers/*/reserve").permitAll()
+                // Every method, not only GET: Spring MVC answers HEAD with the GET handler, so a GET-only rule
+                // would let any role run the search with HEAD
+                .requestMatchers("/api/drivers/nearby").hasRole("PASSENGER")
                 .requestMatchers(HttpMethod.PATCH, "/api/drivers/*/status", "/api/drivers/*/location").hasRole("DRIVER")
                 .anyRequest().authenticated()
             )

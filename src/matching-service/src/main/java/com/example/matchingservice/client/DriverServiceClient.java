@@ -1,88 +1,62 @@
 package com.example.matchingservice.client;
 
-import com.example.matchingservice.dto.AvailableDriverDto;
-import com.example.matchingservice.dto.ReserveDriverRequest;
-import com.example.matchingservice.dto.ReserveDriverResponse;
+import com.example.matchingservice.dto.*;
 import com.example.matchingservice.exception.DriverReservationConflictException;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.*;
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
+import org.springframework.web.client.*;
+import java.util.*;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.UUID;
-
-@Slf4j
 @Component
 public class DriverServiceClient {
 
-    private final RestClient restClient;
+    private final RestClient client;
 
-    public DriverServiceClient(
-            @Value("${driver-service.url:http://driver-service:8082}") String driverServiceUrl) {
-        log.info("Configuring DriverServiceClient with baseUrl: {}", driverServiceUrl);
-        org.springframework.http.client.SimpleClientHttpRequestFactory requestFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(1000);
-        requestFactory.setReadTimeout(2000);
-        this.restClient = RestClient.builder()
-                .baseUrl(driverServiceUrl)
-                .requestFactory(requestFactory)
-                .build();
+    @Autowired
+    public DriverServiceClient(@Qualifier("internalRestClientBuilder") RestClient.Builder builder,
+            @Value("${driver-service.url:http://driver-service:8082}") String url,
+            @Value("${internal.api-key:}") String key) {
+        var factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(1000);
+        factory.setReadTimeout(2000);
+        client = builder.clone().baseUrl(url).requestFactory(factory).defaultHeader("X-Internal-Api-Key", key).build();
     }
 
     public List<AvailableDriverDto> getAvailableDrivers(Double lat, Double lng, Double radiusKm) {
-        try {
-            log.info("Calling Driver Service GET /api/drivers/available lat={}, lng={}, radiusKm={}", lat, lng, radiusKm);
-            List<AvailableDriverDto> drivers = restClient.get()
-                    .uri(uriBuilder -> uriBuilder
-                            .path("/api/drivers/available")
-                            .queryParam("latitude", lat)
-                            .queryParam("longitude", lng)
-                            .queryParam("radiusKm", radiusKm != null ? radiusKm : 5.0)
-                            .build())
-                    .accept(MediaType.APPLICATION_JSON)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<List<AvailableDriverDto>>() {});
-
-            return drivers != null ? drivers : Collections.emptyList();
-        } catch (Exception e) {
-            log.warn("Error fetching available drivers from driver-service: {}", e.getMessage());
-            return Collections.emptyList();
-        }
+        var response = client.get()
+            .uri(b -> b.path("/api/drivers/available")
+                .queryParam("latitude", lat)
+                .queryParam("longitude", lng)
+                .queryParam("radiusKm", radiusKm)
+                .build())
+            .retrieve()
+            .body(new ParameterizedTypeReference<List<AvailableDriverDto>>() {
+            });
+        if (response == null)
+            throw new RestClientException("Driver returned an empty response");
+        return response;
     }
 
-    public ReserveDriverResponse reserveDriver(UUID driverId, UUID tripId, Integer expectedVersion) {
-        log.info("Attempting CAS reservation for driver={}, tripId={}, expectedVersion={}", driverId, tripId, expectedVersion);
-        ReserveDriverRequest request = ReserveDriverRequest.builder()
-                .tripId(tripId)
-                .expectedVersion(expectedVersion)
-                .build();
-
-        return restClient.post()
-                .uri("/api/drivers/{id}/reserve", driverId)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(request)
-                .retrieve()
-                .onStatus(status -> status.value() == 409, (req, resp) -> {
-                    log.warn("Driver reservation conflict 409 for driver={}", driverId);
-                    throw new DriverReservationConflictException(driverId);
-                })
-                .body(ReserveDriverResponse.class);
+    public ReserveDriverResponse reserveDriver(UUID driverId, UUID tripId, Integer version) {
+        return client.post()
+            .uri("/api/drivers/{id}/reserve", driverId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(ReserveDriverRequest.builder().tripId(tripId).expectedVersion(version).build())
+            .retrieve()
+            .onStatus(s -> s.value() == 409, (req, res) -> {
+                throw new DriverReservationConflictException(driverId);
+            })
+            .body(ReserveDriverResponse.class);
     }
 
-    public void releaseDriverReservation(UUID driverId) {
-        log.info("Releasing reservation for driver={}", driverId);
-        try {
-            restClient.delete()
-                    .uri("/api/drivers/{id}/reserve", driverId)
-                    .retrieve()
-                    .toBodilessEntity();
-        } catch (Exception e) {
-            log.warn("Error releasing driver reservation for driver {}: {}", driverId, e.getMessage());
-        }
+    public void releaseDriverReservation(UUID driverId, UUID tripId) {
+        client.delete()
+            .uri("/api/drivers/{id}/reserve?tripId={tripId}", driverId, tripId)
+            .retrieve()
+            .toBodilessEntity();
     }
+
 }

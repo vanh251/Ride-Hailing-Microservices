@@ -39,18 +39,28 @@ class DriverReservedConsumerTest {
                 {
                   "eventId": "50e4a77d-f434-40da-9e45-f09b52a13cc7",
                   "eventType": "DriverReserved",
+                  "aggregateId": "%s",
+                  "aggregateType": "Trip",
+                  "producer": "matching-service",
+                  "schemaVersion": "1.0",
+                  "correlationId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+                  "occurredAt": "2026-11-09T12:00:00Z",
                   "payload": {
                     "tripId": "%s",
-                    "driverId": "%s"
+                    "driverId": "%s",
+                    "passengerId": "a0000000-0000-4000-8000-000000000001",
+                    "reservedUntil": "2026-11-09T12:00:30Z"
                   }
                 }
-                """.formatted(tripId, driverId);
+                """.formatted(tripId, tripId, driverId);
 
-        ConsumerRecord<String, String> record = new ConsumerRecord<>("matching-events", 0, 0, tripId.toString(), payload);
+        ConsumerRecord<String, String> record = new ConsumerRecord<>("matching-events", 0, 0, tripId.toString(),
+                payload);
 
         consumer.handleDriverReserved(record);
 
-        verify(tripService, times(1)).assignDriver(tripId, driverId);
+        verify(tripService, times(1)).assignDriver(tripId, driverId,
+                UUID.fromString("50e4a77d-f434-40da-9e45-f09b52a13cc7"));
     }
 
     @Test
@@ -67,6 +77,7 @@ class DriverReservedConsumerTest {
 
         consumer.handleDriverReserved(record);
 
-        verify(tripService, never()).assignDriver(any(), any());
+        verify(tripService, never()).assignDriver(any(), any(), any());
     }
+
 }

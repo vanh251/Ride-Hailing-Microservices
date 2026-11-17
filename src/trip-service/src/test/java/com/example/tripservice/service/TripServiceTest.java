@@ -1,329 +1,200 @@
 package com.example.tripservice.service;
 
-import com.example.tripservice.dto.CancelTripRequest;
-import com.example.tripservice.dto.CreateTripRequest;
-import com.example.tripservice.dto.LocationDto;
-import com.example.tripservice.dto.TripResponse;
-import com.example.tripservice.entity.RideRequest;
-import com.example.tripservice.entity.Trip;
-import com.example.tripservice.entity.TripStatus;
-import com.example.tripservice.entity.TripStatusHistory;
-import com.example.tripservice.event.TripEventPublisher;
-import com.example.tripservice.exception.InvalidTripStateException;
-import com.example.tripservice.exception.TripNotFoundException;
+import com.example.tripservice.client.*;
+import com.example.tripservice.dto.*;
+import com.example.tripservice.entity.*;
+import com.example.tripservice.event.*;
+import com.example.tripservice.exception.*;
 import com.example.tripservice.mapper.TripMapper;
-import com.example.tripservice.repository.RideRequestRepository;
-import com.example.tripservice.repository.TripRepository;
-import com.example.tripservice.repository.TripStatusHistoryRepository;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
+import com.example.tripservice.repository.*;
+import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.Spy;
+import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
-
+import org.springframework.web.client.RestClientException;
 import java.math.BigDecimal;
-import java.time.Instant;
-import java.util.Optional;
-import java.util.UUID;
-
+import java.time.*;
+import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class TripServiceTest {
 
     @Mock
-    private TripRepository tripRepository;
+    TripRepository trips;
 
     @Mock
-    private RideRequestRepository rideRequestRepository;
+    RideRequestRepository rides;
 
     @Mock
-    private TripStatusHistoryRepository tripStatusHistoryRepository;
+    TripStatusHistoryRepository histories;
+
+    @Mock
+    SagaLogRepository sagas;
+
+    @Mock
+    PricingServiceClient pricing;
+
+    @Mock
+    DriverServiceClient drivers;
+
+    @Mock
+    TripEventPublisher events;
 
     @Spy
-    private TripMapper tripMapper = new TripMapper();
+    TripMapper mapper = new TripMapper();
 
-    @Mock
-    private TripEventPublisher eventPublisher;
-
-    @Mock
-    private com.example.tripservice.repository.SagaLogRepository sagaLogRepository;
-
-    @Mock
-    private com.example.tripservice.client.PricingServiceClient pricingServiceClient;
+    @Spy
+    Clock clock = Clock.fixed(Instant.parse("2026-11-09T12:00:00Z"), ZoneOffset.UTC);
 
     @InjectMocks
-    private TripServiceImpl tripService;
+    TripServiceImpl service;
 
-    private UUID passengerId;
-    private UUID driverId;
-    private UUID tripId;
-    private CreateTripRequest createTripRequest;
+    UUID id = UUID.randomUUID(), passenger = UUID.randomUUID(), driver = UUID.randomUUID();
 
     @BeforeEach
-    void setUp() {
-        passengerId = UUID.randomUUID();
-        driverId = UUID.randomUUID();
-        tripId = UUID.randomUUID();
-
-        createTripRequest = CreateTripRequest.builder()
-                .passengerId(passengerId)
-                .pickup(LocationDto.builder()
-                        .latitude(21.0285)
-                        .longitude(105.8542)
-                        .address("Hoan Kiem, Hanoi")
-                        .build())
-                .destination(LocationDto.builder()
-                        .latitude(21.0188)
-                        .longitude(105.8520)
-                        .address("Dong Da, Hanoi")
-                        .build())
-                .estimatedFare(BigDecimal.valueOf(45000))
-                .build();
-    }
-
-    @Test
-    @DisplayName("createTrip_validRequest_success: should create a trip in SEARCHING status")
-    void createTrip_validRequest_success() {
-        when(rideRequestRepository.save(any(RideRequest.class))).thenAnswer(invocation -> {
-            RideRequest r = invocation.getArgument(0);
-            if (r.getRequestId() == null) {
-                r.setRequestId(UUID.randomUUID());
-            }
-            return r;
-        });
-
-        when(tripRepository.save(any(Trip.class))).thenAnswer(invocation -> {
-            Trip t = invocation.getArgument(0);
-            if (t.getTripId() == null) {
-                t.setTripId(tripId);
-            }
-            t.setCreatedAt(Instant.now());
-            t.setUpdatedAt(Instant.now());
+    void persistence() {
+        lenient().when(trips.save(any())).thenAnswer(i -> {
+            Trip t = i.getArgument(0);
+            if (t.getTripId() == null)
+                t.setTripId(id);
+            t.prePersist();
             return t;
         });
+        lenient().when(rides.save(any())).thenAnswer(i -> {
+            RideRequest r = i.getArgument(0);
+            if (r.getRequestId() == null)
+                r.setRequestId(UUID.randomUUID());
+            return r;
+        });
+    }
 
-        TripResponse response = tripService.createTrip(createTripRequest, "corr-001", passengerId);
-
-        assertNotNull(response);
-        assertEquals(tripId, response.getTripId());
-        assertEquals(TripStatus.SEARCHING, response.getStatus());
-        assertEquals(passengerId, response.getPassengerId());
-        assertEquals(createTripRequest.getEstimatedFare(), response.getEstimatedFare());
-
-        verify(rideRequestRepository, times(2)).save(any(RideRequest.class));
-        verify(tripRepository, times(1)).save(any(Trip.class));
-        verify(tripStatusHistoryRepository, times(1)).save(any(TripStatusHistory.class));
-        verify(eventPublisher, times(1)).publish(any());
+    Trip trip(TripStatus status) {
+        var t = Trip.builder()
+            .tripId(id)
+            .passengerId(passenger)
+            .driverId(driver)
+            .status(status)
+            .distanceKm(2.8)
+            .currency("VND")
+            .estimatedFare(new BigDecimal("33500"))
+            .correlationId(UUID.randomUUID().toString())
+            .startedAt(clock.instant().minusSeconds(1200))
+            .createdAt(clock.instant().minusSeconds(1300))
+            .pickupLat(21.0)
+            .pickupLng(105.0)
+            .dropoffLat(21.1)
+            .dropoffLng(105.1)
+            .build();
+        when(trips.findByIdForUpdate(id)).thenReturn(Optional.of(t));
+        return t;
     }
 
     @Test
-    @DisplayName("getTrip_existingId_success: should return trip response when trip exists")
-    void getTrip_existingId_success() {
-        Trip trip = Trip.builder()
-                .tripId(tripId)
-                .passengerId(passengerId)
-                .status(TripStatus.SEARCHING)
-                .pickupLat(21.0285)
-                .pickupLng(105.8542)
-                .dropoffLat(21.0188)
-                .dropoffLng(105.8520)
-                .correlationId("corr-001")
-                .createdAt(Instant.now())
-                .updatedAt(Instant.now())
-                .build();
-
-        when(tripRepository.findById(tripId)).thenReturn(Optional.of(trip));
-
-        TripResponse response = tripService.getTrip(tripId);
-
-        assertNotNull(response);
-        assertEquals(tripId, response.getTripId());
-        assertEquals(TripStatus.SEARCHING, response.getStatus());
-        assertEquals(passengerId, response.getPassengerId());
+    void quoteControlsFareAndIdentity_notClientInput() {
+        var location = LocationDto.builder().latitude(21.0).longitude(105.0).build();
+        var request = CreateTripRequest.builder()
+            .pickup(location)
+            .destination(location)
+            .passengerId(UUID.randomUUID())
+            .estimatedFare(BigDecimal.ONE)
+            .build();
+        when(pricing.getQuote(location, location))
+            .thenReturn(new PricingQuoteResponse(2.5, 12, new BigDecimal("33500"), "VND"));
+        var result = service.createTrip(request, UUID.randomUUID().toString(), passenger);
+        assertEquals(passenger, result.getPassengerId());
+        assertEquals(new BigDecimal("33500"), result.getEstimatedFare());
+        assertEquals(TripStatus.SEARCHING, result.getStatus());
+        verify(events).publish(argThat(e -> "RideRequested".equals(e.getEventType()) && e.getCausationId() == null));
     }
 
     @Test
-    @DisplayName("getTrip_invalidId_notFound: should throw TripNotFoundException when trip does not exist")
-    void getTrip_invalidId_notFound() {
-        when(tripRepository.findById(tripId)).thenReturn(Optional.empty());
-
-        assertThrows(TripNotFoundException.class, () -> tripService.getTrip(tripId));
+    void acceptPreservesAssignment_withoutNewHistory() {
+        trip(TripStatus.ASSIGNED);
+        assertEquals(driver, service.acceptTrip(id, driver).getDriverId());
+        verifyNoInteractions(histories, events);
     }
 
     @Test
-    @DisplayName("acceptTrip_validState_success: should transition trip from SEARCHING to ASSIGNED")
-    void acceptTrip_validState_success() {
-        Trip trip = Trip.builder()
-                .tripId(tripId)
-                .passengerId(passengerId)
-                .status(TripStatus.SEARCHING)
-                .pickupLat(21.0285)
-                .pickupLng(105.8542)
-                .dropoffLat(21.0188)
-                .dropoffLng(105.8520)
-                .correlationId("corr-001")
-                .createdAt(Instant.now())
-                .updatedAt(Instant.now())
-                .build();
-
-        when(tripRepository.findById(tripId)).thenReturn(Optional.of(trip));
-        when(tripRepository.save(any(Trip.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        TripResponse response = tripService.acceptTrip(tripId, driverId);
-
-        assertNotNull(response);
-        assertEquals(TripStatus.ASSIGNED, response.getStatus());
-        assertEquals(driverId, response.getDriverId());
-        verify(tripStatusHistoryRepository, times(1)).save(any(TripStatusHistory.class));
+    void startPublishesPassengerAndNeverEmptyDriver() {
+        trip(TripStatus.ASSIGNED);
+        assertEquals(TripStatus.IN_PROGRESS, service.startTrip(id, driver).getStatus());
+        var captor = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(events).publish(captor.capture());
+        var payload = (Map<?, ?>) captor.getValue().getPayload();
+        assertEquals(passenger, payload.get("passengerId"));
+        assertEquals(driver, payload.get("driverId"));
     }
 
     @Test
-    @DisplayName("startTrip_validState_success: should transition trip from ASSIGNED to IN_PROGRESS")
-    void startTrip_validState_success() {
-        Trip trip = Trip.builder()
-                .tripId(tripId)
-                .passengerId(passengerId)
-                .driverId(driverId)
-                .status(TripStatus.ASSIGNED)
-                .pickupLat(21.0285)
-                .pickupLng(105.8542)
-                .dropoffLat(21.0188)
-                .dropoffLng(105.8520)
-                .correlationId("corr-001")
-                .createdAt(Instant.now())
-                .updatedAt(Instant.now())
-                .build();
-
-        when(tripRepository.findById(tripId)).thenReturn(Optional.of(trip));
-        when(tripRepository.save(any(Trip.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        TripResponse response = tripService.startTrip(tripId);
-
-        assertNotNull(response);
-        assertEquals(TripStatus.IN_PROGRESS, response.getStatus());
-        assertNotNull(response.getStartedAt());
-        verify(tripStatusHistoryRepository, times(1)).save(any(TripStatusHistory.class));
-        verify(eventPublisher, times(1)).publish(any());
+    void completeHasEightFieldsAndChargesPricingAmount() {
+        var t = trip(TripStatus.IN_PROGRESS);
+        when(pricing.getFinalFare(id, 2.8, 20))
+            .thenReturn(new PricingFinalFareResponse(id, new BigDecimal("47500"), "VND"));
+        assertEquals(TripStatus.COMPLETED, service.completeTrip(id, driver).getStatus());
+        var captor = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(events).publish(captor.capture());
+        var p = (Map<?, ?>) captor.getValue().getPayload();
+        assertEquals(Set.of("tripId", "driverId", "passengerId", "actualDistanceKm", "actualDurationMin", "finalFare",
+                "currency", "completedAt"), p.keySet());
+        assertEquals(new BigDecimal("47500"), p.get("finalFare"));
+        assertEquals(20, p.get("actualDurationMin"));
+        assertEquals(passenger, p.get("passengerId"));
+        assertEquals("VND", p.get("currency"));
+        assertThrows(InvalidTripStateException.class, () -> service.completeTrip(id, driver));
     }
 
     @Test
-    @DisplayName("completeTrip_validState_success: should transition trip from IN_PROGRESS to COMPLETED")
-    void completeTrip_validState_success() {
-        Trip trip = Trip.builder()
-                .tripId(tripId)
-                .passengerId(passengerId)
-                .driverId(driverId)
-                .status(TripStatus.IN_PROGRESS)
-                .pickupLat(21.0285)
-                .pickupLng(105.8542)
-                .dropoffLat(21.0188)
-                .dropoffLng(105.8520)
-                .estimatedFare(BigDecimal.valueOf(45000))
-                .correlationId("corr-001")
-                .createdAt(Instant.now())
-                .updatedAt(Instant.now())
-                .startedAt(Instant.now())
-                .build();
-
-        when(tripRepository.findById(tripId)).thenReturn(Optional.of(trip));
-        when(tripRepository.save(any(Trip.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        TripResponse response = tripService.completeTrip(tripId);
-
-        assertNotNull(response);
-        assertEquals(TripStatus.COMPLETED, response.getStatus());
-        assertNotNull(response.getCompletedAt());
-        assertNotNull(response.getFinalFare());
-        verify(tripStatusHistoryRepository, times(1)).save(any(TripStatusHistory.class));
-        verify(eventPublisher, times(1)).publish(any());
+    void pricingFailureDoesNotCompleteOrPublish() {
+        var t = trip(TripStatus.IN_PROGRESS);
+        when(pricing.getFinalFare(id, 2.8, 20)).thenThrow(new RestClientException("unavailable"));
+        assertThrows(RestClientException.class, () -> service.completeTrip(id, driver));
+        assertEquals(TripStatus.IN_PROGRESS, t.getStatus());
+        assertNull(t.getFinalFare());
+        verifyNoInteractions(events, histories, sagas);
     }
 
     @Test
-    @DisplayName("cancelTrip_validState_success: should cancel trip when in SEARCHING or ASSIGNED")
-    void cancelTrip_validState_success() {
-        Trip trip = Trip.builder()
-                .tripId(tripId)
-                .passengerId(passengerId)
-                .status(TripStatus.SEARCHING)
-                .pickupLat(21.0285)
-                .pickupLng(105.8542)
-                .dropoffLat(21.0188)
-                .dropoffLng(105.8520)
-                .correlationId("corr-001")
-                .createdAt(Instant.now())
-                .updatedAt(Instant.now())
-                .build();
-
-        when(tripRepository.findById(tripId)).thenReturn(Optional.of(trip));
-        when(tripRepository.save(any(Trip.class))).thenAnswer(invocation -> invocation.getArgument(0));
-
-        CancelTripRequest cancelRequest = CancelTripRequest.builder().reason("Change plans").build();
-        TripResponse response = tripService.cancelTrip(tripId, cancelRequest);
-
-        assertNotNull(response);
-        assertEquals(TripStatus.CANCELLED, response.getStatus());
-        assertNotNull(response.getCancelledAt());
-        verify(tripStatusHistoryRepository, times(1)).save(any(TripStatusHistory.class));
-        verify(eventPublisher, times(1)).publish(any());
+    void paymentSuccessAndFailureAreTerminal_andWrongPaymentRejected() {
+        var t = trip(TripStatus.COMPLETED);
+        t.setFinalFare(new BigDecimal("47500"));
+        assertThrows(ValidationException.class,
+                () -> service.applyPaymentResult(id, UUID.randomUUID(), passenger, BigDecimal.ONE, "VND", true, null));
+        assertEquals(TripStatus.COMPLETED, t.getStatus());
+        service.applyPaymentResult(id, UUID.randomUUID(), passenger, new BigDecimal("47500.00"), "VND", true, null);
+        assertEquals(TripStatus.PAID, t.getStatus());
+        service.applyPaymentResult(id, UUID.randomUUID(), passenger, new BigDecimal("47500"), "VND", false, "DECLINED");
+        assertEquals(TripStatus.PAID, t.getStatus());
+        verify(histories, times(1)).save(any());
     }
 
     @Test
-    @DisplayName("invalidStateTransition_rejected: starting a SEARCHING trip or cancelling COMPLETED trip should fail")
-    void invalidStateTransition_rejected() {
-        // Case 1: Starting a trip that is still SEARCHING
-        Trip searchingTrip = Trip.builder()
-                .tripId(tripId)
-                .passengerId(passengerId)
-                .status(TripStatus.SEARCHING)
-                .pickupLat(21.0285)
-                .pickupLng(105.8542)
-                .dropoffLat(21.0188)
-                .dropoffLng(105.8520)
-                .correlationId("corr-001")
-                .build();
-
-        when(tripRepository.findById(tripId)).thenReturn(Optional.of(searchingTrip));
-
-        assertThrows(InvalidTripStateException.class, () -> tripService.startTrip(tripId));
-
-        // Case 2: Completing a trip that is not IN_PROGRESS (e.g. ASSIGNED)
-        Trip assignedTrip = Trip.builder()
-                .tripId(tripId)
-                .passengerId(passengerId)
-                .driverId(driverId)
-                .status(TripStatus.ASSIGNED)
-                .pickupLat(21.0285)
-                .pickupLng(105.8542)
-                .dropoffLat(21.0188)
-                .dropoffLng(105.8520)
-                .correlationId("corr-001")
-                .build();
-
-        when(tripRepository.findById(tripId)).thenReturn(Optional.of(assignedTrip));
-
-        assertThrows(InvalidTripStateException.class, () -> tripService.completeTrip(tripId));
-
-        // Case 3: Cancelling a COMPLETED trip
-        Trip completedTrip = Trip.builder()
-                .tripId(tripId)
-                .passengerId(passengerId)
-                .driverId(driverId)
-                .status(TripStatus.COMPLETED)
-                .pickupLat(21.0285)
-                .pickupLng(105.8542)
-                .dropoffLat(21.0188)
-                .dropoffLng(105.8520)
-                .correlationId("corr-001")
-                .build();
-
-        when(tripRepository.findById(tripId)).thenReturn(Optional.of(completedTrip));
-
-        assertThrows(InvalidTripStateException.class, () -> tripService.cancelTrip(tripId, null));
+    void paymentFailureDoesNotCancelOrTouchDriver() {
+        var t = trip(TripStatus.COMPLETED);
+        t.setFinalFare(new BigDecimal("47500"));
+        service.applyPaymentResult(id, UUID.randomUUID(), passenger, new BigDecimal("47500"), "VND", false, "DECLINED");
+        assertEquals(TripStatus.PAYMENT_FAILED, t.getStatus());
+        verifyNoInteractions(drivers, events);
     }
+
+    @Test
+    void cancellationReleasesOnlyItsTrip_andReplayDoesNotPublishAgain() {
+        var t = trip(TripStatus.ASSIGNED);
+        assertEquals(TripStatus.CANCELLED, service.cancelTrip(id, null, passenger).getStatus());
+        service.cancelTrip(id, null, passenger);
+        verify(drivers, times(1)).releaseDriverReservation(driver, id);
+        verify(events, times(1)).publish(argThat(e -> "TripCancelled".equals(e.getEventType())));
+    }
+
+    @Test
+    void timeoutCannotCancelAssignedTrip_andLateAssignmentCannotResurrectCancellation() {
+        var t = trip(TripStatus.ASSIGNED);
+        assertThrows(InvalidTripStateException.class, () -> service.cancelForMatchingTimeout(id));
+        t.setStatus(TripStatus.CANCELLED);
+        service.assignDriver(id, UUID.randomUUID(), UUID.randomUUID());
+        assertEquals(TripStatus.CANCELLED, t.getStatus());
+        verifyNoInteractions(events);
+    }
+
 }

@@ -26,21 +26,48 @@
 
 ## 1. Authentication
 
-All requests to backend services (except `/api/auth/register/passenger`, `/api/auth/register/driver` and `/api/auth/login`) require:
+All requests through the gateway, except the public routes listed below, require:
 
 ```
 Authorization: Bearer <accessToken>
 ```
 
-**Token format:** JWT (HS256), issued by Identity Service.  
-**Token expiry:** 24 hours (configurable via `JWT_EXPIRATION_MS`).
+**Token format:** JWT (HS256), issued by Identity Service at `POST /api/auth/login`. Claims: `sub` = user id, `role`, `iat`, `exp`.
+**Token expiry:** 24 hours (configurable via `JWT_EXPIRATION_MS`). There is no refresh token: after expiry the client logs in again.
+**Signing key:** `JWT_SECRET` (Base64, at least 256 bits), the same value in identity-service, api-gateway and driver-service. A service does not start with a key that is not Base64 or is shorter than 256 bits.
+
+The token is read only from the `Authorization` header with the scheme written `Bearer`. A token in the query string or a cookie, `Basic` credentials, or a token without the scheme count as no token.
+
+How the whole system is protected, what is tested and the known limitations are described in [security.md](security.md).
+
+### Verification at the API Gateway
+
+The gateway verifies the token (signature, expiry, `sub` is a UUID, `role` is a known role) before it routes a request, and checks the role for the endpoints marked PASSENGER or DRIVER below (the full list is in §10). "Own resource" checks stay in the backend service. identity-service and driver-service verify the token again themselves; trip, matching, pricing, payment and notification rely on the gateway.
+
+| Case | Response |
+|---|---|
+| No `Authorization: Bearer` header on a protected route | `401 MISSING_TOKEN` |
+| Bad signature, malformed token, missing `sub`/`role`, unknown role | `401 INVALID_TOKEN` |
+| Expired token | `401 TOKEN_EXPIRED` |
+| Valid token, role not allowed on the endpoint | `403 ACCESS_DENIED` |
+
+The `401` and `403` answers use the standard error body of §8 with the `code` above; a `401` also carries `WWW-Authenticate: Bearer`.
+
+Routes that need no token at the gateway: `POST /api/auth/register/passenger`, `POST /api/auth/register/driver`, `POST /api/auth/login`, `GET /api/drivers/available` and `/actuator/**`. They are public only for that method and exact path: `GET /api/auth/login` or `POST /api/auth/refresh`, for example, need a token. An invalid token on a public route is ignored, the request goes through as anonymous.
+
+Endpoints marked "internal" that the gateway still routes (`/api/matching/**`, `POST /api/pricing/final`, `POST /api/payments/{tripId}/charge`, `POST /api/payments/{tripId}/refund`) need a valid token of any role at the gateway; no role rule is applied to them yet.
+
+**`X-User-Id`:** for an authenticated request the gateway forwards the header `X-User-Id` = the token's `sub` (the user id) to the backend, together with the original `Authorization` header. An `X-User-Id` sent by the client is always dropped, on public routes too, so a backend behind the gateway can trust the header: it is either absent (anonymous request) or the verified user id.
+
+**`X-User-Role`:** the gateway forwards the verified token's `role` for authenticated requests. A value sent by the client is always dropped, including on public routes.
 
 ### Role-based Access
 
 | Role | Permissions |
 |---|---|
-| `PASSENGER` | Create ride, cancel own ride, view own trip |
-| `DRIVER` | Update own status, update own location, accept/reject/start/complete trip |
+| `PASSENGER` | Search nearby drivers, create ride, cancel own ride, view own trip |
+| `DRIVER` | Update own status, update own location, accept/start/complete trip |
+| `ADMIN` | No endpoint is reserved for `ADMIN` and it cannot be self-registered. An `ADMIN` token passes the "any role" endpoints and gets `403` on the PASSENGER-only and DRIVER-only ones |
 
 ---
 
@@ -48,6 +75,11 @@ Authorization: Bearer <accessToken>
 
 **Internal address:** `http://identity-service:8081`  
 **Gateway prefix:** `/api/auth/**`, `/api/users/**`
+**Swagger UI:** `http://localhost:8081/swagger-ui.html` (direct port only, not routed by the gateway)
+
+Identity Service owns the accounts (`identity_db.users`) and is the only service that issues tokens. There are two public registration endpoints, one per role, and no way to register an `ADMIN`. Passwords are stored as BCrypt hashes and never returned or logged.
+
+Demo accounts (10 drivers, 3 passengers) are created at startup when `SEED_DATA_ENABLED=true`: see `docs/test-data/identity/README.md`.
 
 ---
 
@@ -68,8 +100,8 @@ Register a passenger account. The role is set by the endpoint (`PASSENGER`); a `
 
 | Field | Type | Required | Constraints |
 |---|---|---|---|
-| fullName | string | Yes | 1-100 chars |
-| email | string | Yes | Valid email, unique (stored trimmed and lower-cased) |
+| fullName | string | Yes | Not blank, at most 100 chars (stored trimmed) |
+| email | string | Yes | Valid email, at most 255 chars, unique (stored trimmed and lower-cased) |
 | password | string | Yes | 8-72 chars (BCrypt limit) |
 
 **Response 201 Created:**
@@ -85,7 +117,8 @@ Register a passenger account. The role is set by the endpoint (`PASSENGER`); a `
 
 **Errors:**
 - `400 VALIDATION_ERROR` – Missing field, invalid email format, password length
-- `409 EMAIL_ALREADY_REGISTERED` – Email already registered
+- `400 MALFORMED_REQUEST` – Body is not valid JSON
+- `409 EMAIL_ALREADY_REGISTERED` – Email already registered (compared after trimming and lower-casing)
 
 ---
 
@@ -171,12 +204,13 @@ identity-service                                     driver-service
 - `409 EMAIL_ALREADY_REGISTERED` – Email already registered
 - `409 LICENSE_PLATE_ALREADY_REGISTERED` – Plate already registered
 - `503 DRIVER_SERVICE_UNAVAILABLE` – driver-service did not answer in time; nothing was kept, the client may retry
+- `500 DRIVER_REGISTRATION_FAILED` – driver-service refused the internal call (e.g. the two services have different `INTERNAL_API_KEY` values); the account was removed again. A deployment error, not a client error
 
 ---
 
 ### POST /api/auth/login
 
-Authenticate and receive JWT.
+Authenticate with email and password and receive a JWT access token.
 
 **Auth required:** No
 
@@ -187,6 +221,11 @@ Authenticate and receive JWT.
   "password": "securePassword123"
 }
 ```
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| email | string | Yes | Valid email, at most 255 chars (trimmed and lower-cased before the lookup) |
+| password | string | Yes | At most 72 chars |
 
 **Response 200 OK:**
 ```json
@@ -199,9 +238,20 @@ Authenticate and receive JWT.
 }
 ```
 
+`expiresIn` is the token lifetime in seconds (`JWT_EXPIRATION_MS` / 1000). The token is an HS256 JWT with these claims:
+
+| Claim | Value |
+|---|---|
+| `sub` | The user id (same value as `userId`; for a driver also the `driverId`) |
+| `role` | `PASSENGER`, `DRIVER` or `ADMIN` |
+| `iat`, `exp` | Issued-at and expiry time (seconds since the epoch) |
+
+There is no refresh token and no logout endpoint: a token is valid until `exp`, then the client logs in again.
+
 **Errors:**
-- `400` – Missing fields
-- `401` – Invalid credentials
+- `400 VALIDATION_ERROR` – Missing email or password, invalid email format, password longer than 72 chars
+- `400 MALFORMED_REQUEST` – Body is not valid JSON
+- `401 INVALID_CREDENTIALS` – Unknown email or wrong password. Both cases return the same response, so the endpoint does not reveal which emails are registered
 
 ---
 
@@ -228,16 +278,22 @@ Get user profile.
 }
 ```
 
+Any authenticated user may read any profile, including the email address: there is no "own profile only" rule on this endpoint. The password hash is never part of the response.
+
 **Errors:**
-- `401` – Missing or invalid JWT
-- `404` – User not found
+- `400 INVALID_PARAMETER` – `{id}` is not a UUID
+- `401 MISSING_TOKEN` / `INVALID_TOKEN` / `TOKEN_EXPIRED` – No valid JWT (see §1)
+- `404 USER_NOT_FOUND` – No user with this id
 
 ---
 
 ## 3. Driver Service
 
 **Internal address:** `http://driver-service:8082`  
-**Gateway prefix:** `/api/drivers/**`
+**Gateway prefix:** `/api/drivers/*`, `/api/drivers/*/status`, `/api/drivers/*/location` (the reserve endpoints and `/internal/**` are not routed, see §10)
+**Swagger UI:** `http://localhost:8082/swagger-ui.html` (direct port only, not routed by the gateway)
+
+Driver Service verifies the JWT itself as well (same `JWT_SECRET` as Identity Service), so the role and "own resource" rules below also hold for a call that does not come through the gateway. Service-to-service endpoints take the header `X-Internal-Api-Key` instead of a JWT.
 
 > **Driver id = user id.** A driver's id is its identity `userId` (`drivers.driver_id = users.user_id`, see database_schema.md). The `{id}` in every `/api/drivers/{id}` URL, the JWT `sub` of a driver, the `X-User-Id` header and every `driverId` field (matching, trip, events) carry the same value.
 
@@ -283,9 +339,9 @@ Get driver details: profile, active vehicle and last known position.
 
 ### GET /api/drivers/available
 
-List AVAILABLE drivers near a point: the `limit` nearest drivers within `radiusKm` (Haversine distance), nearest first. Same search as `/nearby`, plus the `version` and `status` Matching Service needs.
+List AVAILABLE drivers near a point: the drivers within `radiusKm` (Haversine distance), nearest first, one page at a time. Same search as `/nearby`, plus the `version` and `status` Matching Service needs.
 
-**Auth required:** No token checked for now. Called by Matching Service, which has no service credential yet; once it sends one, this becomes "PASSENGER or internal". Until then the gateway also exposes it publicly, so the required point and the `radiusKm` / `limit` caps keep a caller from listing the whole fleet in one request.
+**Auth required:** No token or internal key is checked for this endpoint. Matching calls driver-service directly and supplies its internal key, but the gateway also exposes this endpoint publicly. The required point and the `radiusKm` / `size` caps keep a caller from listing the whole fleet in one request. With `page`, a caller can still walk through every available driver within 50 km of a point, 50 at a time.
 
 **Query Parameters:**
 
@@ -294,7 +350,10 @@ List AVAILABLE drivers near a point: the `limit` nearest drivers within `radiusK
 | latitude | double | Yes | Reference point (pickup) latitude, -90..90 |
 | longitude | double | Yes | Reference point (pickup) longitude, -180..180 |
 | radiusKm | double | No | Search radius in km (default: 5.0, max 50) |
-| limit | int | No | Maximum number of drivers (default: 20, 1..50) |
+| page | int | No | Page number, from 0 (default: 0) |
+| size | int | No | Drivers per page, 1..50. When absent, `limit` is used |
+| sort | string | No | `distanceKm,asc` (nearest first, default) or `distanceKm,desc` |
+| limit | int | No | Older name of `size` (default: 20, 1..50); ignored when `size` is sent |
 
 **Response 200 OK:**
 ```json
@@ -316,17 +375,19 @@ List AVAILABLE drivers near a point: the `limit` nearest drivers within `radiusK
 
 `version` is the value Matching Service sends as `expectedVersion` to `POST /api/drivers/{id}/reserve` (CAS). Drivers that never reported a position are not listed.
 
+Paging follows §8: the response is the array of the requested page, and a page after the last one is an empty array. A call without `page`, `size` and `sort` returns the 20 nearest drivers, as before.
+
 **Errors:**
-- `400 VALIDATION_ERROR` – Missing `latitude` / `longitude`, coordinate out of range, `radiusKm` ≤ 0 or > 50, `limit` outside 1..50
+- `400 VALIDATION_ERROR` – Missing `latitude` / `longitude`, coordinate out of range, `radiusKm` ≤ 0 or > 50, `limit` or `size` outside 1..50, `page` < 0, `sort` other than `distanceKm,asc` / `distanceKm,desc`
 - `400 INVALID_PARAMETER` – Non-numeric parameter
 
 ---
 
 ### GET /api/drivers/nearby
 
-Query nearby AVAILABLE drivers (spatial search): the `limit` nearest drivers within `radiusKm` (Haversine distance), nearest first.
+Query nearby AVAILABLE drivers (spatial search): the drivers within `radiusKm` (Haversine distance), nearest first, one page at a time (§8).
 
-**Auth required:** Yes (PASSENGER). Matching Service uses `GET /api/drivers/available` instead, so no internal caller needs this endpoint today.
+**Auth required:** Yes (PASSENGER). Matching Service uses `GET /api/drivers/available` instead, so no internal caller needs this endpoint today. The role rule covers every HTTP method on this path, so `HEAD` (which is answered like `GET`) needs a PASSENGER token too.
 
 **Query Parameters:**
 
@@ -335,7 +396,10 @@ Query nearby AVAILABLE drivers (spatial search): the `limit` nearest drivers wit
 | latitude | double | Yes | Pickup latitude, -90..90 |
 | longitude | double | Yes | Pickup longitude, -180..180 |
 | radiusKm | double | No | Radius in km (default: 5.0, max 50) |
-| limit | int | No | Max results (default: 10, 1-50) |
+| page | int | No | Page number, from 0 (default: 0) |
+| size | int | No | Drivers per page, 1-50. When absent, `limit` is used |
+| sort | string | No | `distanceKm,asc` (nearest first, default) or `distanceKm,desc` |
+| limit | int | No | Older name of `size` (default: 10, 1-50); ignored when `size` is sent |
 
 **Response 200 OK:**
 ```json
@@ -354,8 +418,9 @@ Query nearby AVAILABLE drivers (spatial search): the `limit` nearest drivers wit
 ```
 
 **Errors:**
-- `400 VALIDATION_ERROR` – Missing coordinate, value out of range, `limit` outside 1-50
-- `401` – Missing, invalid or expired JWT
+- `400 VALIDATION_ERROR` – Missing coordinate, value out of range, `limit` or `size` outside 1-50, `page` < 0, unknown `sort`
+- `400 INVALID_PARAMETER` – Non-numeric parameter
+- `401 MISSING_TOKEN` / `INVALID_TOKEN` / `TOKEN_EXPIRED` – No valid JWT
 - `403 ACCESS_DENIED` – Token role is not `PASSENGER`
 
 ---
@@ -457,7 +522,7 @@ Stored with 6 decimals (`DECIMAL(9, 6)`) together with `last_heartbeat_at`. A po
 
 Reserve a driver (CAS lock with 30s lease). Used internally by Matching Service.
 
-**Auth required:** Yes (internal service call)
+**Auth required:** `X-Internal-Api-Key` (value of `INTERNAL_API_KEY`), no JWT. Matching calls this endpoint directly and also sends `X-Correlation-ID`. Missing or wrong key returns `401 INVALID_INTERNAL_API_KEY`.
 
 **Request Body:**
 ```json
@@ -478,18 +543,33 @@ Reserve a driver (CAS lock with 30s lease). Used internally by Matching Service.
 }
 ```
 
+The reservation is one atomic `UPDATE ... WHERE status = 'AVAILABLE' AND version = expectedVersion`, so of several concurrent requests for the same driver exactly one succeeds. `expectedVersion` is the `version` returned by `GET /api/drivers/available`.
+
+**Lease:** `reservedUntil` is 30 seconds after the reservation (`DRIVER_RESERVATION_LEASE_SECONDS`). A driver still `RESERVED` after that returns to `AVAILABLE` on its own (`reserved_for_trip` and `reserved_until` cleared, `version + 1`); expired leases are looked for every 5 seconds (`DRIVER_RESERVATION_EXPIRY_CHECK_MS`), so the release happens 30–35 seconds after the reservation.
+
 **Errors:**
-- `409` – Driver already reserved (CAS failed – affectedRows = 0)
+- `400 VALIDATION_ERROR` / `400 MALFORMED_REQUEST` – Missing `tripId` / `expectedVersion`, negative `expectedVersion`, or `tripId` not a UUID
+- `400 INVALID_PARAMETER` – `{id}` is not a UUID
+- `401 INVALID_INTERNAL_API_KEY` – Missing or wrong `X-Internal-Api-Key`
+- `404 DRIVER_NOT_FOUND` – No driver with this id
+- `409 DRIVER_ALREADY_RESERVED` – The driver is not `AVAILABLE` or its version is no longer `expectedVersion` (CAS failed – affectedRows = 0)
 
 ---
 
 ### DELETE /api/drivers/{id}/reserve
 
-Release driver reservation (compensating action). Returns driver to AVAILABLE.
+Release a RESERVED driver reservation. The `tripId` query parameter is required: `DELETE /api/drivers/{id}/reserve?tripId={tripId}`. Driver-service releases the reservation only if its `reserved_for_trip` matches `tripId`. A late request for an older trip cannot release a newer reservation.
 
-**Auth required:** Yes (internal service call)
+**Auth required:** `X-Internal-Api-Key` (value of `INTERNAL_API_KEY`), no JWT. Called directly by Matching for compensation and by Trip for cancellation.
 
-**Response 204 No Content**
+**Response 204 No Content**, including an already released or non-matching reservation. Driver owns the 30-second lease cleanup; Matching does not run another driver lease timer.
+
+Only a `RESERVED` driver owned by `tripId` is released (`reserved_for_trip` and `reserved_until` cleared, `version + 1`). The ownership and status conditions are checked in the same atomic database update. The call is idempotent: a driver in any other status or reserved for another trip is left unchanged and the response is still `204`. A `BUSY` driver is released by the `TripCompleted` / `TripCancelled` events, not by this endpoint.
+
+**Errors:**
+- `400` – `tripId` is missing or not a UUID, or `{id}` is not a UUID
+- `401 INVALID_INTERNAL_API_KEY` – Missing or wrong `X-Internal-Api-Key`
+- `404 DRIVER_NOT_FOUND` – No driver with this id
 
 ---
 
@@ -522,6 +602,23 @@ Create the driver profile (status `OFFLINE`) and its vehicle.
 Compensation step. Deletes the profile (`driver_id = userId`) and vehicle of the user. Idempotent: `204` also when no profile exists. Only a profile that is `OFFLINE` and not reserved can be deleted, otherwise `409 DRIVER_PROFILE_IN_USE`.
 
 **Response 204 No Content**
+
+---
+
+### Events consumed (Kafka)
+
+Driver Service has no REST endpoint for the system transitions `RESERVED → BUSY` and `BUSY → AVAILABLE`: it consumes `trip-events` (consumer group `driver-service-group`). The full contract is in docs/events.md §4.3, §4.5, §4.8.
+
+| Event | Driver changed | Change |
+|---|---|---|
+| `DriverAssigned` | `payload.driverId`, if it is `RESERVED` for `payload.tripId` | `RESERVED → BUSY`, `reserved_until` cleared (the lease no longer applies), `version + 1` |
+| `TripCompleted` | The driver whose `reserved_for_trip` is `payload.tripId`, if `BUSY` | `→ AVAILABLE`, `reserved_for_trip` and `reserved_until` cleared, `version + 1` |
+| `TripCancelled` | The driver whose `reserved_for_trip` is `payload.tripId`, if `RESERVED` or `BUSY` | Same as `TripCompleted` |
+
+- An event that matches no driver (no driver yet, lease already expired, driver already on another trip) is logged and skipped.
+- Each `eventId` takes effect once: it is stored in `processed_events` in the same transaction as the status change, and a redelivery is skipped.
+- A malformed event (not JSON, `eventId` or `tripId` not a UUID, `DriverAssigned` without `driverId`) goes straight to `trip-events.DLQ`. Any other failure is retried 3 times (1s, 2s, 4s) and then sent to the DLQ.
+- Other event types on `trip-events` are ignored.
 
 ---
 
@@ -946,14 +1043,24 @@ Returns the latest payment of the trip. **Errors:** `400 INVALID_PARAMETER` (not
 | `Content-Type` | Yes (for POST/PATCH) | `application/json` |
 | `X-Correlation-ID` | No (auto-generated if absent) | Trace ID for distributed tracing |
 | `X-Request-ID` | No | Unique per-request ID |
+| `X-User-Id` | Set by the gateway, never by clients | User id (`sub`) of the verified token; a value sent by the client is dropped (§1) |
+| `X-User-Role` | Set by the gateway, never by clients | Role of the verified token; a value sent by the client is dropped (§1) |
 | `X-Idempotency-Key` | Required for payment charge (or `idempotencyKey` in the body) | Prevents duplicate operations |
-| `X-Internal-Api-Key` | Required for `/internal/**` (service-to-service only) | Shared secret `INTERNAL_API_KEY`; never sent by clients |
+| `X-Internal-Api-Key` | Required for `/internal/**` and `POST`/`DELETE /api/drivers/{id}/reserve` (service-to-service only) | Shared secret `INTERNAL_API_KEY`; never sent by clients |
 
 ### Pagination (for list endpoints)
 
 ```
-GET /api/drivers/available?page=0&size=10&sort=distanceKm,asc
+GET /api/drivers/available?latitude=21.0285&longitude=105.8542&page=0&size=10&sort=distanceKm,asc
 ```
+
+| Param | Default | Description |
+|---|---|---|
+| `page` | `0` | Page number, starting at 0 |
+| `size` | endpoint default | Items per page, 1..50 |
+| `sort` | `distanceKm,asc` | `<field>,<asc or desc>`; the direction may be left out (`asc`) |
+
+The response is the JSON array of that page, with no wrapper and no total count: a page with fewer than `size` items, or an empty array, is the last one. Implemented by `GET /api/drivers/available` and `GET /api/drivers/nearby` (§3), where `distanceKm` is the only sortable field. An out-of-range `page` or `size`, or an unknown `sort`, returns `400 VALIDATION_ERROR`.
 
 ### Identifiers and Money
 
@@ -1022,8 +1129,56 @@ All client requests enter via `http://localhost:8080`.
 | `/api/pricing/**` | pricing-service | `http://pricing-service:8085/api/pricing/**` |
 | `/api/payments/**` | payment-service | `http://payment-service:8086/api/payments/**` |
 | `/api/notifications/**` | notification-service | `http://notification-service:8087/api/notifications/**` |
-| `/actuator/health` | api-gateway | (local) |
+| `/actuator/health`, `/actuator/info`, `/actuator/prometheus` | api-gateway | (local) |
 
 > No `lb://` scheme is used. Service discovery is via Docker DNS only.
 > `/internal/**` (service-to-service APIs) is intentionally **not** routed by the gateway.
-> `POST`/`DELETE /api/drivers/{id}/reserve` is **not** routed either (gateway returns `404`): only Matching Service calls it, directly at `http://driver-service:8082`.
+> `POST`/`DELETE /api/drivers/{id}/reserve` is **not** routed either (gateway returns `404`). Matching calls both directly at `http://driver-service:8082`; Trip also calls DELETE for cancellation compensation. Both clients use the same internal key.
+> The gateway verifies the JWT before routing (§1): any other path without a valid token gets `401`, including paths that have no route.
+> Swagger UI and `/v3/api-docs` of the services are not routed: open them on the service's own port (e.g. `http://localhost:8081/swagger-ui.html`).
+
+### Access rules at the gateway
+
+Checked in this order; the first matching line applies.
+
+| Method | Path | Access |
+|---|---|---|
+| any | `/actuator/**` | Public (only `health`, `info`, `prometheus` exist) |
+| POST | `/api/auth/register/passenger`, `/api/auth/register/driver`, `/api/auth/login` | Public |
+| GET | `/api/drivers/available` | Public (see §3) |
+| any | `/internal/**`, `/api/drivers/*/reserve` | Not routed: `404` |
+| any | `/api/drivers/nearby` | `PASSENGER` |
+| PATCH | `/api/drivers/*/status`, `/api/drivers/*/location` | `DRIVER` |
+| POST | `/api/trips`, `/api/trips/*/cancel` | `PASSENGER` |
+| POST | `/api/trips/*/accept`, `/api/trips/*/start`, `/api/trips/*/complete` | `DRIVER` |
+| any | everything else | Any valid token (`PASSENGER`, `DRIVER` or `ADMIN`) |
+
+### What the gateway adds and answers itself
+
+| Situation | Behaviour |
+|---|---|
+| Every request | `X-Correlation-ID` is generated when the client sent none, forwarded to the backend and returned in the response |
+| Authenticated request | `X-User-Id` = token `sub` and `X-User-Role` = token `role` are forwarded; client-supplied values for both headers are dropped (§1). |
+| Missing / invalid / expired token, wrong role | `401` / `403` with the standard error body and `code` (§1); the backend is not called |
+| Valid token, path without a route | `404` |
+| Path not in normal form (`..`, `//`, `;`, encoded `/` or `.`) | `400`, with or without a token; the backend is not called |
+| Backend unreachable | `500` with Spring's default error body (`timestamp`, `status`, `error`, `path`; no `code`) |
+| Cross-origin browser request | No CORS headers are sent, so a page on another origin cannot read the answer |
+
+The gateway keeps no session and sets no cookie: every request is authenticated by its own token.
+
+## 11. Member 2 W3 implementation notes (09/11/2026)
+
+These notes record Member 2 integration behavior. The gateway, driver-service and shared environment configuration must be verified together for full-system acceptance.
+
+- Gateway validates JWT/role and replaces client-supplied `X-User-Id` and `X-User-Role`. Trip requires these trusted headers on client POST requests. Direct service ports are for development, not an authenticated alternative client entry point.
+- Create ignores legacy body passengerId/estimatedFare; identity comes from the gateway, price and route estimate from Pricing `/quote`. A supplied X-Correlation-ID must be a UUID. Pricing failure returns 503, never a fallback price.
+- Accept requires ASSIGNED and the assigned driver. It never assigns SEARCHING or changes driverId. Start/complete require the same driver; cancellation requires the trip passenger. Invalid lifecycle state returns 409. Client cancellation supports SEARCHING/ASSIGNED and is idempotent once CANCELLED.
+- Complete calls Pricing `/final` before committing COMPLETED and publishes all eight required fields. W3 uses the quote distance as simulated trip distance and elapsed minutes (minimum 1), not GPS mileage. Pricing failure leaves IN_PROGRESS and emits no completion event.
+- Internal GET `/api/trips/{id}` and POST `/api/trips/{id}/cancel` use X-Internal-Api-Key. Internal cancel only accepts `{ "reason": "MATCHING_TIMEOUT" }`, only changes SEARCHING, and is idempotent for CANCELLED. This key cannot start or complete a trip.
+- Matching match/rematch endpoints require the internal key. M2 creates requestId = tripId from RideRequested. Unknown manual requestId returns 404, never fabricated data. A manual attempt returns 202 with resulting MATCHED/NO_DRIVER_FOUND, correcting earlier illustrative MATCHING/REMATCHING labels. Background retry uses the scheduler.
+- Defaults: radius 5 km, search budget 60s, maximum 3 rounds, retry scan 5s. CAS 409 moves to the next candidate in the same round. Search rounds are separate from the three Kafka consumer retries.
+- Rematch cannot replace a committed MATCHED reservation whose DriverReserved may be in flight. Only unsuccessful searches with Trip SEARCHING are retried. Exhaustion requests cancellation from Trip; Trip alone publishes TripCancelled. Recovery beyond the lease remains W5.
+- Downstream transport/auth/contract errors propagate for bounded Kafka retry or HTTP 503, not NO_DRIVER_FOUND. Failed release is logged; TripCancelled and the authoritative lease provide fallback cleanup.
+- Cancellation commits its state/outbox before the external DELETE. An after-commit callback attempts release before returning HTTP; rollback never frees an active trip's driver. Event and REST cleanup may race safely after commit.
+- New HTTP errors include code where applicable: INVALID_INTERNAL_API_KEY, UNAUTHORIZED, FORBIDDEN, VALIDATION_ERROR, DOWNSTREAM_UNAVAILABLE, CONCURRENT_UPDATE. No new public URL/event is introduced.
