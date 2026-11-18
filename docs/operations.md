@@ -59,6 +59,26 @@ Result on 2026-11-13: all three scenarios passed.
 
 To demo the `PaymentFailed` saga path, set `PAYMENT_FAILURE_MODE=always` in `.env` and restart payment-service.
 
+## 4.1. Member 2 W5 assignment recovery demo (pending M1/M3 handoff)
+
+Preconditions: deploy the W5 Trip and Matching images together; apply `scripts/db/2026-11-19-m2-w5-trip.sql` to `trip_db` and `scripts/db/2026-11-19-m2-w5-matching.sql` to `matching_db`; have M1 deploy the version/lease-fenced Driver transition and `DriverAssignmentConfirmed`/`DriverAssignmentRejected` outbox producer; have M3 provision `driver-events` (3 partitions) and `driver-events.DLQ` (1 partition). Existing W3 Driver does not produce these events, so it cannot complete this demo.
+
+1. Through Gateway, create a Trip and note its UUID and correlation ID. Stop only `trip-service` immediately after Matching has written a `DriverReserved` outbox row: `docker compose stop trip-service`. Keep it stopped until the 30-second Driver lease expires, but restart before the original 60-second search deadline: `docker compose start trip-service`.
+2. Inspect `trip_db.trips` and `matching_db.match_requests` for that UUID. The stale event must not set `ASSIGNED`; `trip-events` must contain `AssignmentRecoveryRequested`; Matching should increment `attempt_count` at most once and emit a new `DriverReserved` only if another driver is available. The new event must carry a different `eventId` and its own `reservationVersion`.
+3. Stop `driver-service` after a new `DriverAssigned` is in `trip-events`, then start it again. Driver must emit exactly one logical confirmed/rejected result for the command, even if Kafka redelivers it. Trip reaches `ASSIGNED` only for a matching confirmation; rejection triggers bounded recovery.
+4. Repeat with Trip or Driver paused past the original 60-second deadline. Trip must commit `CANCELLED`, a `TripCancelled` outbox row, and `saga_log.SAGA_COMPENSATED`. Driver eventually returns a `RESERVED` or `BUSY` driver for that trip to `AVAILABLE`. A late confirmation must not reopen the trip.
+
+Useful state queries (replace the UUID and database user if `.env` overrides the default):
+
+```powershell
+docker compose exec -T trip-db psql -U postgres -d trip_db -c "SELECT trip_id,status,driver_id,pending_driver_id,pending_assignment_event_id FROM trips WHERE trip_id='TRIP_UUID';"
+docker compose exec -T trip-db psql -U postgres -d trip_db -c "SELECT step_name,status,payload FROM saga_log WHERE trip_id='TRIP_UUID' ORDER BY created_at;"
+docker compose exec -T matching-db psql -U postgres -d matching_db -c "SELECT request_id,status,attempt_count,matched_driver_id,active_reservation_event_id FROM match_requests WHERE trip_id='TRIP_UUID';"
+docker compose exec -T driver-db psql -U postgres -d driver_db -c "SELECT driver_id,status,reserved_for_trip,reserved_until,version FROM drivers WHERE reserved_for_trip='TRIP_UUID';"
+```
+
+Record the trip UUID, Kafka event IDs, database output, and stop/start timestamps. Do not treat a unit test or a paused service without these state checks as the completed fault demo.
+
 ## 5. Performance experiment
 
 `scripts/load/run.sh` runs k6 from its Docker image against pricing and payment directly (not through

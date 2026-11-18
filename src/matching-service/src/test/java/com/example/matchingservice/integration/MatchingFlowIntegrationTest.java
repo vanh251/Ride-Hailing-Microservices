@@ -20,6 +20,7 @@ import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.support.*;
 import tools.jackson.databind.ObjectMapper;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -33,7 +34,7 @@ class MatchingFlowIntegrationTest {
     @Configuration
     @EnableTransactionManagement
     @EnableJpaRepositories(basePackageClasses = MatchRequestRepository.class)
-    @Import({ MatchingServiceImpl.class, MatchingEventPublisher.class })
+    @Import({ MatchingServiceImpl.class, MatchingEventPublisher.class, TripEventConsumer.class })
     static class Config {
 
         @Bean
@@ -81,6 +82,12 @@ class MatchingFlowIntegrationTest {
 
     @Autowired
     MatchingService service;
+
+    @Autowired
+    TripEventConsumer tripEvents;
+
+    @Autowired
+    ObjectMapper mapper;
 
     @Autowired
     MatchRequestRepository requests;
@@ -209,6 +216,34 @@ class MatchingFlowIntegrationTest {
         finally {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void recoveryEventRematchesOnlyCurrentReservation() {
+        var ride = event();
+        service.handleRideRequested(ride);
+        UUID trip = UUID.fromString(ride.getAggregateId());
+        UUID old = requests.findById(trip).orElseThrow().getActiveReservationEventId();
+        var recovery = EventEnvelope.<Map<String, Object>>builder()
+            .eventId(UUID.randomUUID()).eventType("AssignmentRecoveryRequested")
+            .aggregateId(trip.toString()).aggregateType("Trip").producer("trip-service")
+            .correlationId(ride.getCorrelationId()).occurredAt(Instant.now())
+            .payload(Map.of("tripId", trip.toString(), "sourceDriverReservedEventId", old.toString(),
+                "reason", "LEASE_EXPIRED")).build();
+        tripEvents.onTripEvent(new ConsumerRecord<>("trip-events", 0, 0, trip.toString(),
+            mapper.writeValueAsString(recovery)));
+        var after = requests.findById(trip).orElseThrow();
+        assertEquals(2, after.getAttemptCount());
+        assertNotEquals(old, after.getActiveReservationEventId());
+        var replay = EventEnvelope.<Map<String, Object>>builder()
+            .eventId(UUID.randomUUID()).eventType("AssignmentRecoveryRequested")
+            .aggregateId(trip.toString()).aggregateType("Trip").producer("trip-service")
+            .correlationId(ride.getCorrelationId()).occurredAt(Instant.now())
+            .payload(Map.of("tripId", trip.toString(), "sourceDriverReservedEventId", old.toString(),
+                "reason", "LEASE_EXPIRED")).build();
+        tripEvents.onTripEvent(new ConsumerRecord<>("trip-events", 0, 1, trip.toString(),
+            mapper.writeValueAsString(replay)));
+        assertEquals(2, requests.findById(trip).orElseThrow().getAttemptCount());
     }
 
 }

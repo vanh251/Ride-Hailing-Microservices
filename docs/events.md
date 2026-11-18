@@ -2,8 +2,8 @@
 
 ## Ride-Hailing Microservices System (DS03)
 
-**Version:** 1.2.0 (W5 assignment confirmation contract; Driver/M3 rollout pending)  
-**Date:** 19/11/2026  
+**Version:** 1.2.0 (W5 assignment confirmation contract; Driver/M3 rollout pending)
+**Date:** 19/11/2026
 **Message Broker:** Apache Kafka 3.8.0 (KRaft mode)  
 **Bootstrap Server:** `kafka:9092` (Docker internal)
 

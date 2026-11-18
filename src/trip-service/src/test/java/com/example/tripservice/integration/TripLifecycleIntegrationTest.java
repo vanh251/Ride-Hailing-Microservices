@@ -38,6 +38,7 @@ class TripLifecycleIntegrationTest {
     @EnableTransactionManagement
     @EnableJpaRepositories(basePackageClasses = TripRepository.class)
     @Import({ TripServiceImpl.class, TripEventPublisher.class, PaymentEventConsumer.class, DriverReservedConsumer.class,
+            DriverAssignmentResultConsumer.class,
             TripMapper.class })
     static class Config {
 
@@ -91,6 +92,9 @@ class TripLifecycleIntegrationTest {
     TripRepository tripRows;
 
     @Autowired
+    DataSource testDataSource;
+
+    @Autowired
     PricingServiceClient pricing;
 
     @Autowired
@@ -101,6 +105,9 @@ class TripLifecycleIntegrationTest {
 
     @Autowired
     DriverReservedConsumer assignments;
+
+    @Autowired
+    DriverAssignmentResultConsumer assignmentOutcomes;
 
     @Autowired
     ProcessedEventRepository processed;
@@ -330,6 +337,86 @@ class TripLifecycleIntegrationTest {
         trips.beginAssignment(trip, driver, 2, Instant.parse("2026-11-09T12:00:30Z"), UUID.randomUUID());
         UUID command = tripRows.findById(trip).orElseThrow().getPendingAssignmentEventId();
         trips.applyAssignmentOutcome(trip, driver, 2, command, true);
+    }
+
+    @Test
+    void staleReservationCommitsRecoveryWithoutAssignedTrip() {
+        var location = LocationDto.builder().latitude(21.0).longitude(105.0).build();
+        UUID trip = trips.createTrip(CreateTripRequest.builder().pickup(location).destination(location).build(),
+            UUID.randomUUID().toString(), passenger).getTripId();
+        var event = EventEnvelope.builder().eventId(UUID.randomUUID()).eventType("DriverReserved")
+            .aggregateId(trip.toString()).aggregateType("Trip").producer("matching-service")
+            .correlationId(trips.getTrip(trip).getCorrelationId()).occurredAt(Instant.now())
+            .payload(Map.of("tripId", trip, "driverId", UUID.randomUUID(), "passengerId", passenger,
+                "reservedUntil", Instant.parse("2026-11-09T11:59:59Z"), "reservationVersion", 2))
+            .build();
+        assignments.handleDriverReserved(new ConsumerRecord<>("matching-events", 0, 0, trip.toString(),
+            mapper.writeValueAsString(event)));
+        assertEquals(TripStatus.SEARCHING, trips.getTrip(trip).getStatus());
+        assertTrue(outbox.findAll().stream().anyMatch(o -> o.getAggregateId().equals(trip.toString())
+            && "AssignmentRecoveryRequested".equals(o.getEventType())));
+        assertFalse(outbox.findAll().stream().anyMatch(o -> o.getAggregateId().equals(trip.toString())
+            && "DriverAssigned".equals(o.getEventType())));
+    }
+
+    @Test
+    void duplicateDriverConfirmationCommitsOneAssignedTransition() {
+        var location = LocationDto.builder().latitude(21.0).longitude(105.0).build();
+        UUID trip = trips.createTrip(CreateTripRequest.builder().pickup(location).destination(location).build(),
+            UUID.randomUUID().toString(), passenger).getTripId();
+        UUID driver = UUID.randomUUID();
+        trips.beginAssignment(trip, driver, 2, Instant.parse("2026-11-09T12:00:30Z"), UUID.randomUUID());
+        UUID command = tripRows.findById(trip).orElseThrow().getPendingAssignmentEventId();
+        var event = EventEnvelope.builder().eventId(UUID.randomUUID()).eventType("DriverAssignmentConfirmed")
+            .aggregateId(trip.toString()).aggregateType("Trip").producer("driver-service")
+            .correlationId(trips.getTrip(trip).getCorrelationId()).causationId(command.toString())
+            .occurredAt(Instant.now()).payload(Map.of("tripId", trip, "driverId", driver,
+                "reservationVersion", 2, "driverAssignedEventId", command)).build();
+        var record = new ConsumerRecord<String, String>("driver-events", 0, 0, trip.toString(),
+            mapper.writeValueAsString(event));
+        assignmentOutcomes.onDriverOutcome(record);
+        assignmentOutcomes.onDriverOutcome(record);
+        assertEquals(TripStatus.ASSIGNED, trips.getTrip(trip).getStatus());
+        assertEquals(1, histories.findAll().stream().filter(h -> h.getTripId().equals(trip)
+            && h.getToStatus() == TripStatus.ASSIGNED).count());
+    }
+
+    @Test
+    void concurrentTimeoutAndConfirmationCommitOneCancellation() throws Exception {
+        var location = LocationDto.builder().latitude(21.0).longitude(105.0).build();
+        UUID trip = trips.createTrip(CreateTripRequest.builder().pickup(location).destination(location).build(),
+            UUID.randomUUID().toString(), passenger).getTripId();
+        UUID driver = UUID.randomUUID();
+        trips.beginAssignment(trip, driver, 2, Instant.parse("2026-11-09T12:00:30Z"), UUID.randomUUID());
+        UUID command = tripRows.findById(trip).orElseThrow().getPendingAssignmentEventId();
+        new org.springframework.jdbc.core.JdbcTemplate(testDataSource).update(
+            "UPDATE m2_trip.trips SET created_at = ? WHERE trip_id = ?",
+            java.sql.Timestamp.from(Instant.parse("2026-11-09T11:58:59Z")), trip);
+        var start = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            var confirmation = executor.submit(() -> {
+                start.await();
+                trips.applyAssignmentOutcome(trip, driver, 2, command, true);
+                return true;
+            });
+            var timeout = executor.submit(() -> {
+                start.await();
+                trips.expirePendingAssignment(trip);
+                return true;
+            });
+            start.countDown();
+            assertTrue(confirmation.get(5, TimeUnit.SECONDS));
+            assertTrue(timeout.get(5, TimeUnit.SECONDS));
+            assertEquals(TripStatus.CANCELLED, trips.getTrip(trip).getStatus());
+            assertEquals(1, histories.findAll().stream().filter(h -> h.getTripId().equals(trip)
+                && h.getToStatus() == TripStatus.CANCELLED).count());
+            assertEquals(1, outbox.findAll().stream().filter(o -> o.getAggregateId().equals(trip.toString())
+                && "TripCancelled".equals(o.getEventType())).count());
+        }
+        finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test
