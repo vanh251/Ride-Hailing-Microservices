@@ -37,22 +37,22 @@
 - Consumes: `GATEWAY_URL`, `WAIT_SECONDS`, Compose services, Gateway auth/trip/driver endpoints.
 - Produces: executable Bash script with exit 0 only when one Trip is `ASSIGNED` to the demo driver, the other has no driver, Driver is `BUSY`, and PostgreSQL ownership/version agree.
 
-- [ ] **Step 1: Add a small local contract check**
+- [x] **Step 1: Add a small local contract check**
 
 Create a shell harness or equivalent checks for malformed JSON, a failed POST, two assigned trips, and mismatched database ownership. Each must produce nonzero exit and no PASS line. Use stubs only at the external command boundary; do not mock application internals.
 
-- [ ] **Step 2: Run the contract check and observe failure**
+- [x] **Step 2: Run the contract check and observe failure**
 
 Run the checks against the absent script and confirm they fail because `scripts/e2e-concurrency.sh` is missing.
 
-- [ ] **Step 3: Implement `scripts/e2e-concurrency.sh`**
+- [x] **Step 3: Implement `scripts/e2e-concurrency.sh`**
 
 Use the happy-path script's registration, login, location and status request shapes. Probe an empty cell, position a new driver, verify it is the sole candidate, capture the pre-race version via read-only SQL, release two background curl jobs together, then poll the two trips and driver. Re-query SQL for `status`, `reserved_for_trip`, and `version`. Print evidence and PASS; print the last observation and fail on deadline.
 
-- [ ] **Step 4: Verify script behavior**
+- [x] **Step 4: Verify script behavior**
 
 Run `bash -n scripts/e2e-concurrency.sh` and the contract check. Run against the full Compose stack if available; require an actual PASS with two distinct trip IDs and one database owner. If the stack is unavailable, report that limit without claiming full integration success.
 
-- [ ] **Step 5: Document and commit**
+- [x] **Step 5: Document and commit**
 
 Add prerequisites, invocation, expected evidence and the meaning of two `201` responses to `scripts/README.md`. Run `git diff --check`; commit only the script, its check if retained, and documentation.
