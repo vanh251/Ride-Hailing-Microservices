@@ -112,6 +112,45 @@ public class MatchingServiceImpl implements MatchingService {
 
     @Override
     @Transactional
+    public void handleAssignmentRecovery(EventEnvelope<Map<String, Object>> event) {
+        validate(event);
+        var eventKey = new ProcessedEventId(event.getEventId(), CONSUMER);
+        if (processedEventRepository.existsById(eventKey))
+            return;
+        if (!"Trip".equals(event.getAggregateType()) || !"trip-service".equals(event.getProducer()))
+            throw new ValidationException("Invalid recovery producer");
+        var payload = event.getPayload();
+        UUID tripId = uuid(payload, "tripId");
+        UUID source = uuid(payload, "sourceDriverReservedEventId");
+        text(payload, "reason");
+        if (!tripId.toString().equals(event.getAggregateId()))
+            throw new ValidationException("Trip aggregate mismatch");
+        var request = required(tripId);
+        if (request.getStatus() == MatchStatus.MATCHED && source.equals(request.getActiveReservationEventId())) {
+            if (!"SEARCHING".equals(tripServiceClient.getTripStatus(tripId))) {
+                request.setStatus(MatchStatus.EXPIRED);
+                matchRequestRepository.save(request);
+            }
+            else if (exhausted(request)) {
+                tripServiceClient.cancelForMatchingTimeout(tripId, request.getCorrelationId());
+                request.setStatus(MatchStatus.EXPIRED);
+                matchRequestRepository.save(request);
+            }
+            else {
+                request.setStatus(MatchStatus.NO_DRIVER_FOUND);
+                request.setMatchedDriverId(null);
+                request.setActiveReservationEventId(null);
+                request.setActiveReservationVersion(null);
+                request.setActiveReservedUntil(null);
+                rematchDriver(tripId, request.getCorrelationId());
+            }
+        }
+        processedEventRepository.save(ProcessedEvent.builder().id(eventKey).processedAt(clock.instant())
+            .resultSummary("AssignmentRecoveryRequested:" + tripId).build());
+    }
+
+    @Override
+    @Transactional
     public MatchResponse matchDriver(UUID requestId, String correlationId) {
         var r = required(requestId);
         if (r.getStatus() == MatchStatus.MATCHED)

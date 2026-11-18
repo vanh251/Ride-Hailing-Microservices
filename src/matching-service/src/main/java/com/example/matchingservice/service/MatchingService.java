@@ -14,6 +14,8 @@ public interface MatchingService {
 
     void handleTripCancelled(EventEnvelope<Map<String, Object>> event);
 
+    void handleAssignmentRecovery(EventEnvelope<Map<String, Object>> event);
+
     void retryOrExpire(UUID requestId);
 
 }

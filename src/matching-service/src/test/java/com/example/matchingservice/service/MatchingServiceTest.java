@@ -203,4 +203,71 @@ class MatchingServiceTest {
             .build();
     }
 
+    @Test
+    void expiredAttemptRematchesOnce() {
+        UUID source = UUID.randomUUID();
+        request.setStatus(MatchStatus.MATCHED);
+        request.setMatchedDriverId(d1);
+        request.setActiveReservationEventId(source);
+        when(drivers.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble())).thenReturn(List.of());
+        service.handleAssignmentRecovery(recovery(source));
+        assertEquals(2, request.getAttemptCount());
+        assertEquals(MatchStatus.NO_DRIVER_FOUND, request.getStatus());
+        verify(drivers, never()).releaseDriverReservation(any(), any());
+    }
+
+    @Test
+    void oldAttemptCannotClearNewAttempt() {
+        request.setStatus(MatchStatus.MATCHED);
+        request.setMatchedDriverId(d2);
+        request.setActiveReservationEventId(UUID.randomUUID());
+        service.handleAssignmentRecovery(recovery(UUID.randomUUID()));
+        assertEquals(d2, request.getMatchedDriverId());
+        assertEquals(1, request.getAttemptCount());
+        verifyNoInteractions(drivers);
+    }
+
+    @Test
+    void duplicateRecoveryDoesNotIncrementAttempt() {
+        UUID source = UUID.randomUUID();
+        var event = recovery(source);
+        when(processed.existsById(new ProcessedEventId(event.getEventId(), "matching-service.trip-events")))
+            .thenReturn(true);
+        service.handleAssignmentRecovery(event);
+        assertEquals(1, request.getAttemptCount());
+    }
+
+    @Test
+    void exhaustedRecoveryCancelsTripOnce() {
+        UUID source = UUID.randomUUID();
+        request.setStatus(MatchStatus.MATCHED);
+        request.setActiveReservationEventId(source);
+        request.setAttemptCount(3);
+        service.handleAssignmentRecovery(recovery(source));
+        assertEquals(MatchStatus.EXPIRED, request.getStatus());
+        verify(trips).cancelForMatchingTimeout(trip, request.getCorrelationId());
+    }
+
+    @Test
+    void recoveryForNonSearchingTripDoesNotRematch() {
+        UUID source = UUID.randomUUID();
+        request.setStatus(MatchStatus.MATCHED);
+        request.setActiveReservationEventId(source);
+        when(trips.getTripStatus(trip)).thenReturn("CANCELLED");
+        service.handleAssignmentRecovery(recovery(source));
+        assertEquals(1, request.getAttemptCount());
+        verifyNoInteractions(drivers);
+    }
+
+    private EventEnvelope<Map<String, Object>> recovery(UUID source) {
+        return EventEnvelope.<Map<String, Object>>builder()
+            .eventId(UUID.randomUUID()).eventType("AssignmentRecoveryRequested")
+            .aggregateId(trip.toString()).aggregateType("Trip")
+            .producer("trip-service").correlationId(request.getCorrelationId()).schemaVersion("1.0")
+            .occurredAt(clock.instant())
+            .payload(Map.of("tripId", trip.toString(), "sourceDriverReservedEventId", source.toString(),
+                "reason", "LEASE_EXPIRED"))
+            .build();
+    }
+
 }
