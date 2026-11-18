@@ -124,6 +124,7 @@ class MatchingFlowIntegrationTest {
 
     EventEnvelope<Map<String, Object>> event() {
         UUID trip = UUID.randomUUID();
+        Instant requestedAt = Instant.now();
         return EventEnvelope.<Map<String, Object>>builder()
             .eventId(UUID.randomUUID())
             .eventType("RideRequested")
@@ -131,9 +132,9 @@ class MatchingFlowIntegrationTest {
             .aggregateType("Trip")
             .producer("trip-service")
             .correlationId(UUID.randomUUID().toString())
-            .occurredAt(Instant.now())
+            .occurredAt(requestedAt)
             .payload(Map.of("tripId", trip.toString(), "passengerId", UUID.randomUUID().toString(), "pickup",
-                    Map.of("latitude", 10.77, "longitude", 106.7)))
+                    Map.of("latitude", 10.77, "longitude", 106.7), "requestedAt", requestedAt.toString()))
             .build();
     }
 

@@ -255,4 +255,58 @@ class TripServiceTest {
         assertThrows(InvalidTripStateException.class, () -> service.startTrip(id, driver));
     }
 
+    private Trip pendingTrip() {
+        var t = trip(TripStatus.SEARCHING);
+        t.setDriverId(null);
+        t.setCreatedAt(clock.instant().minusSeconds(10));
+        service.beginAssignment(id, driver, 2, clock.instant().plusSeconds(20), UUID.randomUUID());
+        return t;
+    }
+
+    @Test
+    void matchingConfirmationCommitsAssigned() {
+        var t = pendingTrip();
+        service.applyAssignmentOutcome(id, driver, 2, t.getPendingAssignmentEventId(), true);
+        assertEquals(TripStatus.ASSIGNED, t.getStatus());
+        assertEquals(driver, t.getDriverId());
+        assertNull(t.getPendingDriverId());
+        verify(sagas).save(argThat(s -> "DRIVER_RESERVED".equals(s.getStatus())));
+    }
+
+    @Test
+    void rejectionEmitsOneRecoveryRequest() {
+        var t = pendingTrip();
+        service.applyAssignmentOutcome(id, driver, 2, t.getPendingAssignmentEventId(), false);
+        assertEquals(TripStatus.SEARCHING, t.getStatus());
+        assertNull(t.getPendingDriverId());
+        verify(events).publish(argThat(e -> "AssignmentRecoveryRequested".equals(e.getEventType())));
+    }
+
+    @Test
+    void duplicateOutcomeIsNoOp() {
+        var t = pendingTrip();
+        UUID command = t.getPendingAssignmentEventId();
+        service.applyAssignmentOutcome(id, driver, 2, command, true);
+        service.applyAssignmentOutcome(id, driver, 2, command, true);
+        verify(sagas, times(1)).save(argThat(s -> "DRIVER_RESERVED".equals(s.getStatus())));
+    }
+
+    @Test
+    void lateConfirmationAfterDeadlineCancels() {
+        var t = pendingTrip();
+        t.setCreatedAt(clock.instant().minusSeconds(61));
+        service.applyAssignmentOutcome(id, driver, 2, t.getPendingAssignmentEventId(), true);
+        assertEquals(TripStatus.CANCELLED, t.getStatus());
+        verify(events).publish(argThat(e -> "TripCancelled".equals(e.getEventType())));
+    }
+
+    @Test
+    void timeoutReleasesThroughTripCancelled() {
+        var t = pendingTrip();
+        t.setCreatedAt(clock.instant().minusSeconds(61));
+        service.expirePendingAssignment(id);
+        assertEquals(TripStatus.CANCELLED, t.getStatus());
+        verify(events).publish(argThat(e -> "TripCancelled".equals(e.getEventType())));
+    }
+
 }

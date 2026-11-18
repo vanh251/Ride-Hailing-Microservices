@@ -88,6 +88,9 @@ class TripLifecycleIntegrationTest {
     TripService trips;
 
     @Autowired
+    TripRepository tripRows;
+
+    @Autowired
     PricingServiceClient pricing;
 
     @Autowired
@@ -143,12 +146,14 @@ class TripLifecycleIntegrationTest {
             .correlationId(trip.getCorrelationId())
             .occurredAt(Instant.now())
             .payload(Map.of("tripId", trip.getTripId(), "driverId", driver, "passengerId", passenger, "reservedUntil",
-                    Instant.now().plusSeconds(30)))
+                    Instant.now().plusSeconds(30), "reservationVersion", 2))
             .build();
         assignments.handleDriverReserved(new ConsumerRecord<>("matching-events", 0, 0, trip.getTripId().toString(),
                 mapper.writeValueAsString(e)));
         assignments.handleDriverReserved(new ConsumerRecord<>("matching-events", 0, 0, trip.getTripId().toString(),
                 mapper.writeValueAsString(e)));
+        trips.applyAssignmentOutcome(trip.getTripId(), driver, 2,
+                tripRows.findById(trip.getTripId()).orElseThrow().getPendingAssignmentEventId(), true);
         trips.acceptTrip(trip.getTripId(), driver);
         trips.startTrip(trip.getTripId(), driver);
         trips.completeTrip(trip.getTripId(), driver);
@@ -284,7 +289,7 @@ class TripLifecycleIntegrationTest {
                     UUID.randomUUID().toString(), passenger)
             .getTripId();
         UUID driver = UUID.randomUUID();
-        trips.beginAssignment(trip, driver, 2, Instant.parse("2026-11-09T12:00:30Z"), UUID.randomUUID());
+        confirmAssignment(trip, driver);
         var releasing = new CountDownLatch(1);
         var allowRelease = new CountDownLatch(1);
         doAnswer(i -> {
@@ -317,8 +322,14 @@ class TripLifecycleIntegrationTest {
             .createTrip(CreateTripRequest.builder().pickup(location).destination(location).build(),
                     UUID.randomUUID().toString(), passenger)
             .getTripId();
-        trips.beginAssignment(trip, driver, 2, Instant.parse("2026-11-09T12:00:30Z"), UUID.randomUUID());
+        confirmAssignment(trip, driver);
         return trip;
+    }
+
+    void confirmAssignment(UUID trip, UUID driver) {
+        trips.beginAssignment(trip, driver, 2, Instant.parse("2026-11-09T12:00:30Z"), UUID.randomUUID());
+        UUID command = tripRows.findById(trip).orElseThrow().getPendingAssignmentEventId();
+        trips.applyAssignmentOutcome(trip, driver, 2, command, true);
     }
 
     @Test

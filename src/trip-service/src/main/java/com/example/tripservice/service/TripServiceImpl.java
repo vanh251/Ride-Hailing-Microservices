@@ -278,6 +278,54 @@ public class TripServiceImpl implements TripService {
 
     @Override
     @Transactional
+    public void applyAssignmentOutcome(UUID tripId, UUID driverId, int reservationVersion,
+            UUID driverAssignedEventId, boolean confirmed) {
+        var trip = loadForUpdate(tripId);
+        if (trip.getStatus() != TripStatus.ASSIGNING
+                || !Objects.equals(trip.getPendingDriverId(), driverId)
+                || !Objects.equals(trip.getPendingReservationVersion(), reservationVersion)
+                || !Objects.equals(trip.getPendingAssignmentEventId(), driverAssignedEventId)) {
+            log.info("Ignoring outdated Driver outcome trip={} command={}", tripId, driverAssignedEventId);
+            return;
+        }
+        if (!clock.instant().isBefore(trip.getCreatedAt().plusSeconds(60))) {
+            cancel(trip, "MATCHING_TIMEOUT", "Assignment outcome arrived after search deadline");
+            return;
+        }
+        if (confirmed) {
+            trip.setDriverId(driverId);
+            transition(trip, TripStatus.ASSIGNED, "Driver confirmed assignment");
+            saga(trip, "DriverAssignmentConfirmed", "DRIVER_RESERVED", "{\"driverId\":\"" + driverId + "\"}");
+        }
+        else {
+            transition(trip, TripStatus.SEARCHING, "Driver rejected assignment");
+            publish("AssignmentRecoveryRequested", trip, trip.getPendingSourceEventId(),
+                    Map.of("tripId", tripId, "sourceDriverReservedEventId", trip.getPendingSourceEventId(),
+                            "reason", "DRIVER_REJECTED"));
+        }
+        clearPending(trip);
+        tripRepository.save(trip);
+    }
+
+    @Override
+    @Transactional
+    public void expirePendingAssignment(UUID tripId) {
+        var trip = loadForUpdate(tripId);
+        if (trip.getStatus() == TripStatus.ASSIGNING
+                && !clock.instant().isBefore(trip.getCreatedAt().plusSeconds(60)))
+            cancel(trip, "MATCHING_TIMEOUT", "Driver confirmation timed out");
+    }
+
+    private void clearPending(Trip trip) {
+        trip.setPendingDriverId(null);
+        trip.setPendingReservationVersion(null);
+        trip.setPendingReservedUntil(null);
+        trip.setPendingSourceEventId(null);
+        trip.setPendingAssignmentEventId(null);
+    }
+
+    @Override
+    @Transactional
     public void applyPaymentResult(UUID tripId, UUID paymentId, UUID passengerId, BigDecimal amount, String currency,
             boolean succeeded, String reason) {
         var trip = loadForUpdate(tripId);
