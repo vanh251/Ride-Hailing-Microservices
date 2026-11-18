@@ -179,6 +179,22 @@ class TripServiceTest {
     }
 
     @Test
+    void paymentFailurePersistsDebtDetailsWithoutReleasingDriver() {
+        var t = trip(TripStatus.COMPLETED);
+        t.setFinalFare(new BigDecimal("47500"));
+        UUID paymentId = UUID.randomUUID();
+        service.applyPaymentResult(id, paymentId, passenger, new BigDecimal("47500"), "VND", false, "DECLINED");
+        var captor = ArgumentCaptor.forClass(SagaLog.class);
+        verify(sagas).save(captor.capture());
+        var payload = captor.getValue().getPayload();
+        assertTrue(payload.contains(paymentId.toString()));
+        assertTrue(payload.contains("47500"));
+        assertTrue(payload.contains("VND"));
+        assertTrue(payload.contains("DECLINED"));
+        verifyNoInteractions(drivers);
+    }
+
+    @Test
     void cancellationReleasesOnlyItsTrip_andReplayDoesNotPublishAgain() {
         var t = trip(TripStatus.ASSIGNED);
         assertEquals(TripStatus.CANCELLED, service.cancelTrip(id, null, passenger).getStatus());

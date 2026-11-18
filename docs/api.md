@@ -455,7 +455,7 @@ Requesting `RESERVED`/`BUSY`, or any transition from `RESERVED`/`BUSY` (e.g. goi
 | AVAILABLE | OFFLINE | Driver: `PATCH /api/drivers/{id}/status` |
 | AVAILABLE | RESERVED | Matching Service: `POST /api/drivers/{id}/reserve` (CAS) |
 | RESERVED | AVAILABLE | `DELETE /api/drivers/{id}/reserve` (compensation), lease expiry (`reserved_until`), or event `TripCancelled` |
-| RESERVED | BUSY | Event `DriverAssigned` (docs/events.md §4.3) |
+| RESERVED | BUSY | Event `DriverAssigned` after exact reservation version and live lease are atomically checked (W5 Driver implementation pending; docs/events.md §4.3) |
 | BUSY | AVAILABLE | Event `TripCompleted` (§4.5) or `TripCancelled` (§4.8) |
 
 System transitions are never done through this endpoint. Event-driven transitions only apply when `drivers.reserved_for_trip` equals the event's `tripId`.
@@ -611,7 +611,7 @@ Driver Service has no REST endpoint for the system transitions `RESERVED → BUS
 
 | Event | Driver changed | Change |
 |---|---|---|
-| `DriverAssigned` | `payload.driverId`, if it is `RESERVED` for `payload.tripId` | `RESERVED → BUSY`, `reserved_until` cleared (the lease no longer applies), `version + 1` |
+| `DriverAssigned` | `payload.driverId`, `payload.tripId`, `payload.reservationVersion`, live `reserved_until` | If all predicates match atomically: `RESERVED → BUSY`, clear `reserved_until`, increment version, emit `DriverAssignmentConfirmed`; otherwise emit `DriverAssignmentRejected`. Member 1 rollout pending |
 | `TripCompleted` | The driver whose `reserved_for_trip` is `payload.tripId`, if `BUSY` | `→ AVAILABLE`, `reserved_for_trip` and `reserved_until` cleared, `version + 1` |
 | `TripCancelled` | The driver whose `reserved_for_trip` is `payload.tripId`, if `RESERVED` or `BUSY` | Same as `TripCompleted` |
 
@@ -1178,7 +1178,7 @@ These notes record Member 2 integration behavior. The gateway, driver-service an
 - Internal GET `/api/trips/{id}` and POST `/api/trips/{id}/cancel` use X-Internal-Api-Key. Internal cancel only accepts `{ "reason": "MATCHING_TIMEOUT" }`, only changes SEARCHING, and is idempotent for CANCELLED. This key cannot start or complete a trip.
 - Matching match/rematch endpoints require the internal key. M2 creates requestId = tripId from RideRequested. Unknown manual requestId returns 404, never fabricated data. A manual attempt returns 202 with resulting MATCHED/NO_DRIVER_FOUND, correcting earlier illustrative MATCHING/REMATCHING labels. Background retry uses the scheduler.
 - Defaults: radius 5 km, search budget 60s, maximum 3 rounds, retry scan 5s. CAS 409 moves to the next candidate in the same round. Search rounds are separate from the three Kafka consumer retries.
-- Rematch cannot replace a committed MATCHED reservation whose DriverReserved may be in flight. Only unsuccessful searches with Trip SEARCHING are retried. Exhaustion requests cancellation from Trip; Trip alone publishes TripCancelled. Recovery beyond the lease remains W5.
+- Public rematch cannot replace a committed MATCHED reservation whose `DriverReserved` may be in flight. W5 adds internal `AssignmentRecoveryRequested`, fenced by the active `DriverReserved.eventId`, to reset only the rejected/expired attempt. The original three-attempt/60-second budget applies. Exhaustion requests cancellation from Trip; Trip alone publishes `TripCancelled`.
 - Downstream transport/auth/contract errors propagate for bounded Kafka retry or HTTP 503, not NO_DRIVER_FOUND. Failed release is logged; TripCancelled and the authoritative lease provide fallback cleanup.
 - Cancellation commits its state/outbox before the external DELETE. An after-commit callback attempts release before returning HTTP; rollback never frees an active trip's driver. Event and REST cleanup may race safely after commit.
 - New HTTP errors include code where applicable: INVALID_INTERNAL_API_KEY, UNAUTHORIZED, FORBIDDEN, VALIDATION_ERROR, DOWNSTREAM_UNAVAILABLE, CONCURRENT_UPDATE. No new public URL/event is introduced.

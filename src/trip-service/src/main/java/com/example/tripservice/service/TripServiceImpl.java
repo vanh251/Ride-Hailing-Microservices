@@ -23,6 +23,8 @@ import java.util.*;
 @RequiredArgsConstructor
 public class TripServiceImpl implements TripService {
 
+    private static final tools.jackson.databind.ObjectMapper SAGA_JSON = new tools.jackson.databind.ObjectMapper();
+
     private final TripRepository tripRepository;
 
     private final RideRequestRepository rideRequestRepository;
@@ -339,8 +341,10 @@ public class TripServiceImpl implements TripService {
         transition(trip, succeeded ? TripStatus.PAID : TripStatus.PAYMENT_FAILED,
                 succeeded ? "Payment succeeded" : reason);
         tripRepository.save(trip);
-        saga(trip, "PaymentResult", succeeded ? "SAGA_COMPLETED" : "COMPENSATED",
-                "{\"paymentId\":\"" + paymentId + "\"}");
+        String sagaPayload = succeeded ? SAGA_JSON.writeValueAsString(Map.of("paymentId", paymentId))
+                : SAGA_JSON.writeValueAsString(Map.of("paymentId", paymentId, "finalFare", trip.getFinalFare(),
+                        "currency", trip.getCurrency(), "reason", Objects.toString(reason, "UNKNOWN")));
+        saga(trip, "PaymentResult", succeeded ? "SAGA_COMPLETED" : "COMPENSATED", sagaPayload);
         if (!succeeded)
             log.warn("Trip payment debt recorded trip={} payment={} reason={}", tripId, paymentId, reason);
     }
