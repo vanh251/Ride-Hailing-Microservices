@@ -49,7 +49,8 @@ class DriverReservedConsumerTest {
                     "tripId": "%s",
                     "driverId": "%s",
                     "passengerId": "a0000000-0000-4000-8000-000000000001",
-                    "reservedUntil": "2026-11-09T12:00:30Z"
+                    "reservedUntil": "2026-11-09T12:00:30Z",
+                    "reservationVersion": 2
                   }
                 }
                 """.formatted(tripId, tripId, driverId);
@@ -59,7 +60,8 @@ class DriverReservedConsumerTest {
 
         consumer.handleDriverReserved(record);
 
-        verify(tripService, times(1)).assignDriver(tripId, driverId,
+        verify(tripService, times(1)).beginAssignment(tripId, driverId, 2,
+                java.time.Instant.parse("2026-11-09T12:00:30Z"),
                 UUID.fromString("50e4a77d-f434-40da-9e45-f09b52a13cc7"));
     }
 
@@ -77,7 +79,7 @@ class DriverReservedConsumerTest {
 
         consumer.handleDriverReserved(record);
 
-        verify(tripService, never()).assignDriver(any(), any(), any());
+        verifyNoInteractions(tripService);
     }
 
 }

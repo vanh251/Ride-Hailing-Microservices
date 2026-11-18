@@ -243,14 +243,19 @@ CREATE TABLE trips (
     -- Soft cross-service references (UUIDs only, no FK constraints)
     passenger_id        UUID        NOT NULL,   -- soft ref → db_identity.users.user_id
     driver_id           UUID,                   -- soft ref → db_driver.drivers.driver_id (null until matched)
+    pending_driver_id   UUID,                   -- reservation awaiting Driver confirmation
+    pending_reservation_version INTEGER,
+    pending_reserved_until TIMESTAMPTZ,
+    pending_source_event_id UUID,
+    pending_assignment_event_id UUID,
 
     -- Trip state machine
-    -- REQUESTED → PRICED → SEARCHING → ASSIGNED → IN_PROGRESS
+    -- REQUESTED → SEARCHING → ASSIGNING → ASSIGNED → IN_PROGRESS
     --          → COMPLETED → PAID
     --          → PAYMENT_FAILED → CANCELLED (compensation path)
     status              VARCHAR(30)  NOT NULL DEFAULT 'REQUESTED'
                             CHECK (status IN (
-                                'REQUESTED', 'PRICED', 'SEARCHING',
+                                'REQUESTED', 'PRICED', 'SEARCHING', 'ASSIGNING',
                                 'ASSIGNED', 'IN_PROGRESS', 'COMPLETED',
                                 'PAID', 'PAYMENT_FAILED', 'CANCELLED', 'FAILED'
                             )),

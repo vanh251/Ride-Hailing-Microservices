@@ -47,13 +47,16 @@ public class DriverReservedConsumer {
         var p = e.getPayload();
         UUID tripId = uuid(p, "tripId"), driverId = uuid(p, "driverId");
         uuid(p, "passengerId");
-        time(p, "reservedUntil");
+        Instant reservedUntil = time(p, "reservedUntil");
+        double rawVersion = number(p, "reservationVersion");
+        if (rawVersion < 1 || rawVersion != Math.rint(rawVersion) || rawVersion > Integer.MAX_VALUE)
+            throw new ValidationException("Invalid reservationVersion");
         if (!"Trip".equals(e.getAggregateType()) || !tripId.toString().equals(e.getAggregateId()))
             throw new ValidationException("Trip aggregate mismatch");
         String previous = MDC.get("correlationId");
         MDC.put("correlationId", e.getCorrelationId());
         try {
-            tripService.assignDriver(tripId, driverId, e.getEventId());
+            tripService.beginAssignment(tripId, driverId, (int) rawVersion, reservedUntil, e.getEventId());
             processedEventRepository.save(ProcessedEvent.builder()
                 .eventId(e.getEventId().toString())
                 .eventType(e.getEventType())

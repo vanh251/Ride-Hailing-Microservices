@@ -284,7 +284,7 @@ class TripLifecycleIntegrationTest {
                     UUID.randomUUID().toString(), passenger)
             .getTripId();
         UUID driver = UUID.randomUUID();
-        trips.assignDriver(trip, driver, UUID.randomUUID());
+        trips.beginAssignment(trip, driver, 2, Instant.parse("2026-11-09T12:00:30Z"), UUID.randomUUID());
         var releasing = new CountDownLatch(1);
         var allowRelease = new CountDownLatch(1);
         doAnswer(i -> {
@@ -317,7 +317,7 @@ class TripLifecycleIntegrationTest {
             .createTrip(CreateTripRequest.builder().pickup(location).destination(location).build(),
                     UUID.randomUUID().toString(), passenger)
             .getTripId();
-        trips.assignDriver(trip, driver, UUID.randomUUID());
+        trips.beginAssignment(trip, driver, 2, Instant.parse("2026-11-09T12:00:30Z"), UUID.randomUUID());
         return trip;
     }
 

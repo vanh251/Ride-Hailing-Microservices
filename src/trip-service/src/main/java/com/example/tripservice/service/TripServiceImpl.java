@@ -118,9 +118,9 @@ public class TripServiceImpl implements TripService {
     @Transactional
     public TripResponse startTrip(UUID tripId, UUID driverId) {
         var trip = loadForUpdate(tripId);
-        requireDriver(trip, driverId);
         if (trip.getStatus() != TripStatus.ASSIGNED)
             throw new InvalidTripStateException(trip.getStatus(), TripStatus.IN_PROGRESS);
+        requireDriver(trip, driverId);
         transition(trip, TripStatus.IN_PROGRESS, "Driver started trip");
         trip.setStartedAt(clock.instant());
         tripRepository.save(trip);
@@ -184,7 +184,8 @@ public class TripServiceImpl implements TripService {
     private TripResponse cancel(Trip trip, String reason, String detail) {
         if (trip.getStatus() == TripStatus.CANCELLED)
             return tripMapper.toResponse(trip);
-        if (trip.getStatus() != TripStatus.SEARCHING && trip.getStatus() != TripStatus.ASSIGNED)
+        if (trip.getStatus() != TripStatus.SEARCHING && trip.getStatus() != TripStatus.ASSIGNING
+                && trip.getStatus() != TripStatus.ASSIGNED)
             throw new InvalidTripStateException("Cannot cancel trip in " + trip.getStatus());
         TripStatus previous = trip.getStatus();
         transition(trip, TripStatus.CANCELLED, detail);
@@ -199,12 +200,14 @@ public class TripServiceImpl implements TripService {
         var payload = new LinkedHashMap<String, Object>();
         payload.put("tripId", trip.getTripId());
         payload.put("passengerId", trip.getPassengerId());
-        if (trip.getDriverId() != null)
-            payload.put("driverId", trip.getDriverId());
+        UUID heldDriver = trip.getDriverId() != null ? trip.getDriverId() : trip.getPendingDriverId();
+        if (heldDriver != null)
+            payload.put("driverId", heldDriver);
         payload.put("previousStatus", previous.name());
         payload.put("reason", reason);
         payload.put("cancelledAt", trip.getCancelledAt());
         publish("TripCancelled", trip, null, payload);
+        saga(trip, "TripCancelled", "SAGA_COMPENSATED", "{\"reason\":\"" + reason + "\"}");
         if (trip.getDriverId() != null) {
             releaseAfterCommit(trip.getDriverId(), trip.getTripId());
         }
@@ -238,20 +241,38 @@ public class TripServiceImpl implements TripService {
 
     @Override
     @Transactional
-    public TripResponse assignDriver(UUID tripId, UUID driverId, UUID sourceEventId) {
+    public TripResponse beginAssignment(UUID tripId, UUID driverId, int reservationVersion, Instant reservedUntil,
+            UUID sourceEventId) {
         var trip = loadForUpdate(tripId);
         if (trip.getStatus() != TripStatus.SEARCHING) {
             log.info("Ignoring assignment for trip={} status={}", tripId, trip.getStatus());
             return tripMapper.toResponse(trip);
         }
-        if (driverId == null || sourceEventId == null)
+        if (driverId == null || sourceEventId == null || reservedUntil == null || reservationVersion < 1)
             throw new ValidationException("Assignment requires driver and source event");
-        trip.setDriverId(driverId);
-        transition(trip, TripStatus.ASSIGNED, "Driver reserved");
+        if (!clock.instant().isBefore(trip.getCreatedAt().plusSeconds(60)))
+            return cancel(trip, "MATCHING_TIMEOUT", "Driver reservation arrived after search deadline");
+        if (!clock.instant().isBefore(reservedUntil)) {
+            publish("AssignmentRecoveryRequested", trip, sourceEventId,
+                    Map.of("tripId", tripId, "sourceDriverReservedEventId", sourceEventId,
+                            "reason", "LEASE_EXPIRED"));
+            return tripMapper.toResponse(trip);
+        }
+        trip.setPendingDriverId(driverId);
+        trip.setPendingReservationVersion(reservationVersion);
+        trip.setPendingReservedUntil(reservedUntil);
+        trip.setPendingSourceEventId(sourceEventId);
+        UUID assignmentEventId = UUID.randomUUID();
+        trip.setPendingAssignmentEventId(assignmentEventId);
+        transition(trip, TripStatus.ASSIGNING, "Driver assignment pending confirmation");
         tripRepository.save(trip);
-        saga(trip, "DriverReserved", "DRIVER_RESERVED", "{\"driverId\":\"" + driverId + "\"}");
-        publish("DriverAssigned", trip, sourceEventId, Map.of("tripId", tripId, "driverId", driverId, "passengerId",
-                trip.getPassengerId(), "assignedAt", clock.instant()));
+        saga(trip, "DriverReserved", "ASSIGNING", "{\"driverId\":\"" + driverId + "\"}");
+        eventPublisher.publish(EventEnvelope.builder().eventId(assignmentEventId).eventType("DriverAssigned")
+                .aggregateId(tripId.toString()).aggregateType("Trip").producer("trip-service")
+                .correlationId(trip.getCorrelationId()).causationId(sourceEventId.toString())
+                .occurredAt(clock.instant()).payload(Map.of("tripId", tripId, "driverId", driverId,
+                        "passengerId", trip.getPassengerId(), "assignedAt", clock.instant(),
+                        "reservationVersion", reservationVersion)).build());
         return tripMapper.toResponse(trip);
     }
 

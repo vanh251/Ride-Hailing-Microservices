@@ -192,9 +192,67 @@ class TripServiceTest {
         var t = trip(TripStatus.ASSIGNED);
         assertThrows(InvalidTripStateException.class, () -> service.cancelForMatchingTimeout(id));
         t.setStatus(TripStatus.CANCELLED);
-        service.assignDriver(id, UUID.randomUUID(), UUID.randomUUID());
+        service.beginAssignment(id, UUID.randomUUID(), 2, clock.instant().plusSeconds(10), UUID.randomUUID());
         assertEquals(TripStatus.CANCELLED, t.getStatus());
         verifyNoInteractions(events);
+    }
+
+    @Test
+    void staleReservationRequestsRecoveryWithoutAssignment() {
+        var t = trip(TripStatus.SEARCHING);
+        t.setDriverId(null);
+        t.setCreatedAt(clock.instant().minusSeconds(40));
+        UUID source = UUID.randomUUID();
+        service.beginAssignment(id, driver, 2, clock.instant().minusSeconds(1), source);
+        assertEquals(TripStatus.SEARCHING, t.getStatus());
+        verify(events).publish(argThat(e -> "AssignmentRecoveryRequested".equals(e.getEventType())));
+        verify(events, never()).publish(argThat(e -> "DriverAssigned".equals(e.getEventType())));
+    }
+
+    @Test
+    void liveLeaseAfterSearchDeadlineCancelsInsteadOfAssigning() {
+        var t = trip(TripStatus.SEARCHING);
+        t.setDriverId(null);
+        t.setCreatedAt(clock.instant().minusSeconds(61));
+        service.beginAssignment(id, driver, 2, clock.instant().plusSeconds(20), UUID.randomUUID());
+        assertEquals(TripStatus.CANCELLED, t.getStatus());
+        verify(events, never()).publish(argThat(e -> "DriverAssigned".equals(e.getEventType())));
+    }
+
+    @Test
+    void liveReservationEntersAssigningAndPublishesVersionedCommand() {
+        var t = trip(TripStatus.SEARCHING);
+        t.setDriverId(null);
+        t.setCreatedAt(clock.instant().minusSeconds(10));
+        UUID source = UUID.randomUUID();
+        service.beginAssignment(id, driver, 2, clock.instant().plusSeconds(20), source);
+        assertEquals(TripStatus.ASSIGNING, t.getStatus());
+        assertNull(t.getDriverId());
+        var captor = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(events).publish(captor.capture());
+        assertEquals("DriverAssigned", captor.getValue().getEventType());
+        assertEquals(2, ((Map<?, ?>) captor.getValue().getPayload()).get("reservationVersion"));
+    }
+
+    @Test
+    void cancelWhileAssigningPublishesTripCancelledAndSagaCompensation() {
+        var t = trip(TripStatus.SEARCHING);
+        t.setDriverId(null);
+        t.setCreatedAt(clock.instant().minusSeconds(10));
+        service.beginAssignment(id, driver, 2, clock.instant().plusSeconds(20), UUID.randomUUID());
+        assertEquals(TripStatus.CANCELLED, service.cancelTrip(id, null, passenger).getStatus());
+        verify(events).publish(argThat(e -> "TripCancelled".equals(e.getEventType())));
+        verify(sagas).save(argThat(s -> "SAGA_COMPENSATED".equals(s.getStatus())));
+    }
+
+    @Test
+    void startAndAcceptRejectAssigning() {
+        var t = trip(TripStatus.SEARCHING);
+        t.setDriverId(null);
+        t.setCreatedAt(clock.instant().minusSeconds(10));
+        service.beginAssignment(id, driver, 2, clock.instant().plusSeconds(20), UUID.randomUUID());
+        assertThrows(InvalidTripStateException.class, () -> service.acceptTrip(id, driver));
+        assertThrows(InvalidTripStateException.class, () -> service.startTrip(id, driver));
     }
 
 }
