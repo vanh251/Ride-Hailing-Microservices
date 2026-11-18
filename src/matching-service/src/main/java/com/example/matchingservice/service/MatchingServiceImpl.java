@@ -56,6 +56,7 @@ public class MatchingServiceImpl implements MatchingService {
             return;
         var p = event.getPayload();
         UUID tripId = uuid(p, "tripId"), passengerId = uuid(p, "passengerId");
+        Instant requestedAt = time(p, "requestedAt");
         if (!tripId.toString().equals(event.getAggregateId()))
             throw new ValidationException("Trip aggregate mismatch");
         var pickup = object(p, "pickup");
@@ -75,7 +76,7 @@ public class MatchingServiceImpl implements MatchingService {
                     .correlationId(event.getCorrelationId())
                     .status(MatchStatus.PENDING)
                     .attemptCount(1)
-                    .expiresAt(clock.instant().plusSeconds(searchTimeoutSeconds))
+                    .expiresAt(requestedAt.plusSeconds(searchTimeoutSeconds))
                     .build();
                 request = matchRequestRepository.saveAndFlush(request);
                 runMatch(request, event.getEventId().toString());
@@ -284,6 +285,10 @@ public class MatchingServiceImpl implements MatchingService {
                 driverOfferRepository.save(offer);
                 r.setMatchedDriverId(d.getId());
                 r.setStatus(MatchStatus.MATCHED);
+                UUID reservationEventId = UUID.randomUUID();
+                r.setActiveReservationEventId(reservationEventId);
+                r.setActiveReservationVersion(reservation.getVersion());
+                r.setActiveReservedUntil(reservation.getReservedUntil());
                 matchRequestRepository.save(r);
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("tripId", r.getTripId());
@@ -293,8 +298,9 @@ public class MatchingServiceImpl implements MatchingService {
                 payload.put("driverLocation", d.getLocation());
                 payload.put("estimatedArrivalMin", Math.max(1, (int) Math.ceil(d.getDistanceKm() * 3)));
                 payload.put("reservedUntil", reservation.getReservedUntil());
+                payload.put("reservationVersion", reservation.getVersion());
                 eventPublisher.publish(EventEnvelope.builder()
-                    .eventId(UUID.randomUUID())
+                    .eventId(reservationEventId)
                     .eventType("DriverReserved")
                     .aggregateId(r.getTripId().toString())
                     .aggregateType("Trip")

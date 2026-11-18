@@ -156,4 +156,51 @@ class MatchingServiceTest {
         verify(drivers, never()).reserveDriver(any(), any(), any());
     }
 
+    @Test
+    void lateRideRequestedExpiresWithoutReserve() {
+        var event = rideRequested(clock.instant().minusSeconds(61));
+        when(requests.findByIdForUpdate(trip)).thenReturn(Optional.empty());
+        when(requests.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
+        service.handleRideRequested(event);
+        verifyNoInteractions(drivers);
+    }
+
+    @Test
+    void timelyRideRequestedUsesOriginalDeadline() {
+        var requestedAt = clock.instant().minusSeconds(12);
+        var event = rideRequested(requestedAt);
+        when(requests.findByIdForUpdate(trip)).thenReturn(Optional.empty());
+        when(requests.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
+        when(drivers.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble())).thenReturn(List.of());
+        service.handleRideRequested(event);
+        var captor = ArgumentCaptor.forClass(MatchRequest.class);
+        verify(requests).saveAndFlush(captor.capture());
+        assertEquals(requestedAt.plusSeconds(60), captor.getValue().getExpiresAt());
+    }
+
+    @Test
+    void driverReservedCarriesActiveVersionAndEventId() {
+        when(drivers.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble())).thenReturn(List.of(candidate(d1, 1)));
+        var reserved = reservation(d1, clock.instant().plusSeconds(30));
+        when(drivers.reserveDriver(d1, trip, 1)).thenReturn(reserved);
+        service.matchDriver(trip, null);
+        var captor = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(events).publish(captor.capture());
+        var event = captor.getValue();
+        assertEquals(2, event.getPayload() instanceof Map<?, ?> p ? p.get("reservationVersion") : null);
+        assertEquals(event.getEventId(), org.springframework.test.util.ReflectionTestUtils.getField(request, "activeReservationEventId"));
+        assertEquals(2, org.springframework.test.util.ReflectionTestUtils.getField(request, "activeReservationVersion"));
+    }
+
+    private EventEnvelope<Map<String, Object>> rideRequested(Instant requestedAt) {
+        return EventEnvelope.<Map<String, Object>>builder()
+            .eventId(UUID.randomUUID()).eventType("RideRequested")
+            .aggregateId(trip.toString()).aggregateType("Trip")
+            .producer("trip-service").correlationId(request.getCorrelationId()).schemaVersion("1.0")
+            .occurredAt(requestedAt)
+            .payload(Map.of("tripId", trip.toString(), "passengerId", request.getPassengerId().toString(),
+                "pickup", Map.of("latitude", 21.0, "longitude", 105.0), "requestedAt", requestedAt.toString()))
+            .build();
+    }
+
 }

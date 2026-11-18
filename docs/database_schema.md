@@ -413,6 +413,9 @@ CREATE TABLE match_requests (
     status              VARCHAR(20)  NOT NULL DEFAULT 'PENDING'
                             CHECK (status IN ('PENDING', 'MATCHING', 'MATCHED', 'NO_DRIVER_FOUND', 'EXPIRED')),
     matched_driver_id   UUID,                   -- soft ref → db_driver.drivers.driver_id
+    active_reservation_event_id UUID,             -- fences recovery of a committed match
+    active_reservation_version INTEGER,           -- Driver version returned by reserve CAS
+    active_reserved_until TIMESTAMPTZ,
     attempt_count       SMALLINT     NOT NULL DEFAULT 1,
     expires_at          TIMESTAMPTZ  NOT NULL,  -- offer window timeout
 
