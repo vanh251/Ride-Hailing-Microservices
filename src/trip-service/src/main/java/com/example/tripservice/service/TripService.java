@@ -3,6 +3,7 @@ package com.example.tripservice.service;
 import com.example.tripservice.dto.*;
 import java.util.UUID;
 import java.math.BigDecimal;
+import java.time.Instant;
 
 public interface TripService {
 
@@ -20,7 +21,13 @@ public interface TripService {
 
     TripResponse cancelForMatchingTimeout(UUID tripId);
 
-    TripResponse assignDriver(UUID tripId, UUID driverId, UUID sourceEventId);
+    TripResponse beginAssignment(UUID tripId, UUID driverId, int reservationVersion, Instant reservedUntil,
+            UUID sourceEventId);
+
+    void applyAssignmentOutcome(UUID tripId, UUID driverId, int reservationVersion, UUID driverAssignedEventId,
+            boolean confirmed);
+
+    void expirePendingAssignment(UUID tripId);
 
     void applyPaymentResult(UUID tripId, UUID paymentId, UUID passengerId, BigDecimal amount, String currency,
             boolean succeeded, String reason);

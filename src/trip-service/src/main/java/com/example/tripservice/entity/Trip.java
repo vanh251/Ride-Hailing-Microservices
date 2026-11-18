@@ -30,6 +30,21 @@ public class Trip {
     @Column(name = "driver_id")
     private UUID driverId;
 
+    @Column(name = "pending_driver_id")
+    private UUID pendingDriverId;
+
+    @Column(name = "pending_reservation_version")
+    private Integer pendingReservationVersion;
+
+    @Column(name = "pending_reserved_until")
+    private Instant pendingReservedUntil;
+
+    @Column(name = "pending_source_event_id")
+    private UUID pendingSourceEventId;
+
+    @Column(name = "pending_assignment_event_id")
+    private UUID pendingAssignmentEventId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 30)
     private TripStatus status;

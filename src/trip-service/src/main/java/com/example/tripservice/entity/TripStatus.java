@@ -3,6 +3,7 @@ package com.example.tripservice.entity;
 public enum TripStatus {
     REQUESTED,
     SEARCHING,
+    ASSIGNING,
     ASSIGNED,
     IN_PROGRESS,
     COMPLETED,
@@ -18,7 +19,9 @@ public enum TripStatus {
             case REQUESTED:
                 return nextStatus == SEARCHING || nextStatus == CANCELLED;
             case SEARCHING:
-                return nextStatus == ASSIGNED || nextStatus == CANCELLED;
+                return nextStatus == ASSIGNING || nextStatus == CANCELLED;
+            case ASSIGNING:
+                return nextStatus == ASSIGNED || nextStatus == SEARCHING || nextStatus == CANCELLED;
             case ASSIGNED:
                 return nextStatus == ASSIGNED || nextStatus == IN_PROGRESS || nextStatus == CANCELLED;
             case IN_PROGRESS:

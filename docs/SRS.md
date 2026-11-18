@@ -947,6 +947,9 @@ Trip Service acts as the central **Saga Orchestrator**, tracking every state cha
 [Matching Service] Find nearby & CAS lock driver -> (driver.reserved -> Kafka)
       |
       v
+[Trip Service] Update Trip(ASSIGNING) + publish DriverAssigned
+      | (Driver atomically confirms exact live reservation and publishes DriverAssignmentConfirmed)
+      v
 [Trip Service] Update Trip(ASSIGNED) + saga_log(DRIVER_RESERVED)
       |
       v ... Trip IN_PROGRESS -> Driver completes ride ...
@@ -958,6 +961,7 @@ Trip Service acts as the central **Saga Orchestrator**, tracking every state cha
       +---> If Success: [Trip Service] Update Trip(PAID) + saga_log(SAGA_COMPLETED)
       |
       +---> If Failed:  [Trip Service] Update Trip(PAYMENT_FAILED) + saga_log(COMPENSATED)
+             with paymentId, finalFare, currency, and reason as the durable debt record
 ```
 
 ## 13.2. Compensating Actions (Bồi hoàn nghiệp vụ)

@@ -31,7 +31,8 @@ public class TripEventConsumer {
         }
         if (event == null)
             throw new ValidationException("Event cannot be null");
-        if (!"RideRequested".equals(event.getEventType()) && !"TripCancelled".equals(event.getEventType()))
+        if (!"RideRequested".equals(event.getEventType()) && !"TripCancelled".equals(event.getEventType())
+                && !"AssignmentRecoveryRequested".equals(event.getEventType()))
             return;
         String previous = MDC.get("correlationId");
         if (event.getCorrelationId() != null)
@@ -39,8 +40,10 @@ public class TripEventConsumer {
         try {
             if ("RideRequested".equals(event.getEventType()))
                 service.handleRideRequested(event);
-            else
+            else if ("TripCancelled".equals(event.getEventType()))
                 service.handleTripCancelled(event);
+            else
+                service.handleAssignmentRecovery(event);
         }
         finally {
             if (previous == null)

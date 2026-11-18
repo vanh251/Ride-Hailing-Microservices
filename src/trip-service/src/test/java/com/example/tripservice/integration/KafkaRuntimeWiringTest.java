@@ -15,7 +15,7 @@ import static org.mockito.Mockito.*;
 @SpringBootTest(properties = {
         "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
         "outbox.poll-interval-ms=3600000", "logging.level.org.apache.kafka=ERROR", "logging.level.kafka=ERROR" })
-@EmbeddedKafka(partitions = 3, topics = { "trip-events", "matching-events", "payment-events" },
+@EmbeddedKafka(partitions = 3, topics = { "trip-events", "matching-events", "payment-events", "driver-events" },
         bootstrapServersProperty = "spring.kafka.bootstrap-servers")
 @org.springframework.test.annotation.DirtiesContext(
         classMode = org.springframework.test.annotation.DirtiesContext.ClassMode.AFTER_CLASS)

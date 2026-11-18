@@ -66,6 +66,15 @@ public class MatchRequest implements org.springframework.data.domain.Persistable
     @Column(name = "matched_driver_id")
     private UUID matchedDriverId;
 
+    @Column(name = "active_reservation_event_id")
+    private UUID activeReservationEventId;
+
+    @Column(name = "active_reservation_version")
+    private Integer activeReservationVersion;
+
+    @Column(name = "active_reserved_until")
+    private Instant activeReservedUntil;
+
     @Column(name = "attempt_count", nullable = false)
     @Builder.Default
     private Integer attemptCount = 1;

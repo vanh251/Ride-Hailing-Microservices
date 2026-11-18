@@ -2,12 +2,16 @@
 
 ## Ride-Hailing Microservices System (DS03)
 
-**Version:** 1.1.0  
-**Date:** 18/10/2026  
+**Version:** 1.2.0 (W5 assignment confirmation contract; Driver/M3 rollout pending)
+**Date:** 19/11/2026
 **Message Broker:** Apache Kafka 3.8.0 (KRaft mode)  
 **Bootstrap Server:** `kafka:9092` (Docker internal)
 
 > **Changes in 1.1.0 (lead decisions, 18/10/2026):** PascalCase `eventType`, plain-UUID ids and money as JSON numbers (§2 Value Conventions); Trip calls Pricing `/final` and Payment charges `finalFare` from `TripCompleted` without calling Pricing (§4.5); required `TripCompleted` payload fields (§4.5); `passengerId` added to `DriverReserved` (§4.2); payment events keep their payload, `causationId` = `TripCompleted.eventId` (§4.6, §4.7); `TripCompleted` is the only trigger of a charge (§4.5); cancellation releases the driver through both `DELETE /reserve` and `TripCancelled`, both idempotent (§4.8); `trip-events` consumer list completed (§3).
+
+> **W5 contract extension:** `DriverReserved` and `DriverAssigned` carry `reservationVersion`. Trip waits in `ASSIGNING` for a Driver outcome. New events are `AssignmentRecoveryRequested`, `DriverAssignmentConfirmed`, and `DriverAssignmentRejected`. Member 1 must implement the Driver outcome producer and M3 must provision `driver-events` before integrated deployment. The envelope `schemaVersion` stays `1.0` for these additive payload changes.
+
+> **Upgrade gate:** A queued W3 `DriverReserved` has no `reservationVersion` and W5 Trip sends it to DLQ. Drain old outboxes and Kafka lag, then resolve every `MATCHED` request whose Trip remains `SEARCHING` before cutover; see `docs/operations.md` §4.1. Do not replay old payloads into the new consumer.
 
 ---
 
@@ -25,6 +29,9 @@
    - [payment.success](#46-paymentsuccess)
    - [payment.failed](#47-paymentfailed)
    - [trip.cancelled](#48-tripcancelled)
+   - [assignment.recovery.requested](#49-assignmentrecoveryrequested)
+   - [driver.assignment.confirmed](#410-driverassignmentconfirmed)
+   - [driver.assignment.rejected](#411-driverassignmentrejected)
 5. [Consumer Group Assignments](#5-consumer-group-assignments)
 6. [Dead Letter Queue](#6-dead-letter-queue)
 7. [Deduplication](#7-deduplication)
@@ -112,9 +119,11 @@ All events share a common envelope:
 | `trip-events` | 3 | trip-service | matching-service, payment-service, driver-service, notification-service | Trip lifecycle events |
 | `matching-events` | 3 | matching-service | trip-service, notification-service | Driver matching results |
 | `payment-events` | 3 | payment-service | trip-service, notification-service | Payment results |
+| `driver-events` | 3 | driver-service | trip-service, notification-service | Driver assignment outcomes (W5 rollout pending) |
 | `trip-events.DLQ` | 1 | Kafka (auto) | Manual / monitoring | Dead letters from trip-events |
 | `matching-events.DLQ` | 1 | Kafka (auto) | Manual / monitoring | Dead letters from matching-events |
 | `payment-events.DLQ` | 1 | Kafka (auto) | Manual / monitoring | Dead letters from payment-events |
+| `driver-events.DLQ` | 1 | Kafka (auto) | Manual / monitoring | Dead letters from driver-events |
 
 ### Topic Configuration (recommended for demo)
 
@@ -214,7 +223,8 @@ A driver has been successfully reserved by the Matching Service (CAS lock acquir
       "longitude": 105.8545
     },
     "estimatedArrivalMin": 3,
-    "reservedUntil": "2026-09-30T10:00:35Z"
+    "reservedUntil": "2026-09-30T10:00:35Z",
+    "reservationVersion": 6
   }
 }
 ```
@@ -223,7 +233,7 @@ A driver has been successfully reserved by the Matching Service (CAS lock acquir
 
 | Consumer | Action |
 |---|---|
-| trip-service | Update trip status: `SEARCHING -> ASSIGNED`; record `DRIVER_RESERVED` in `saga_log` |
+| trip-service | If lease expired, request bounded recovery. Otherwise commit `SEARCHING -> ASSIGNING` and a `DriverAssigned` outbox row; do not expose `ASSIGNED` yet |
 | notification-service | Notify passenger (`payload.passengerId`): "Driver found! [name] is on the way" |
 
 > `passengerId` (contract v1.1) is copied by Matching Service from the `RideRequested` that started the match, so Notification Service can address the passenger without another lookup.
@@ -238,7 +248,7 @@ A driver has been formally assigned to the trip by Trip Service.
 **Producer:** `trip-service`  
 **Consumers:** `driver-service`, `notification-service`
 
-**Trigger:** Trip Service processes `driver.reserved` and updates trip to `ASSIGNED`
+**Trigger:** Trip Service processes a live `DriverReserved` and enters `ASSIGNING`
 
 **Full Event:**
 
@@ -257,7 +267,8 @@ A driver has been formally assigned to the trip by Trip Service.
     "tripId": "550e8400-e29b-41d4-a716-446655440000",
     "driverId": "d0000000-0000-4000-8000-000000000001",
     "passengerId": "a0000000-0000-4000-8000-000000000001",
-    "assignedAt": "2026-09-30T10:00:06Z"
+    "assignedAt": "2026-09-30T10:00:06Z",
+    "reservationVersion": 6
   }
 }
 ```
@@ -266,8 +277,8 @@ A driver has been formally assigned to the trip by Trip Service.
 
 | Consumer | Action |
 |---|---|
-| driver-service | Dedup via `eventId` → update driver status `RESERVED -> BUSY` only if `drivers.reserved_for_trip = tripId`; clear `reserved_until` (lease no longer applies); keep `reserved_for_trip`. No match → log and skip |
-| notification-service | Notify driver: "You have been assigned a new trip" |
+| driver-service | Dedup via `eventId`; atomically require matching trip, exact reservation version, `RESERVED`, and live lease before `RESERVED -> BUSY`. Publish one confirmed/rejected outcome from outbox. Member 1 implementation pending |
+| notification-service | Defer definitive assignment notice until `DriverAssignmentConfirmed`; M3 implementation pending |
 
 ---
 
@@ -528,15 +539,40 @@ A trip has been cancelled by the passenger (or timeout).
 
 ---
 
+### 4.9. `AssignmentRecoveryRequested`
+
+**Topic:** `trip-events` · **Producer:** trip-service · **Consumer:** matching-service.
+Trip commits this event in its outbox when a `DriverReserved` lease is already expired or Driver explicitly rejects the exact attempt. The envelope has `aggregateType=Trip`, `aggregateId=tripId`, `causationId=DriverReserved.eventId`, and Kafka key `tripId`.
+
+```json
+{"tripId":"550e8400-e29b-41d4-a716-446655440000","sourceDriverReservedEventId":"e0000000-0000-4000-8000-000000000002","reason":"LEASE_EXPIRED"}
+```
+
+`reason` is `LEASE_EXPIRED` or `DRIVER_REJECTED`. Matching resets only a `MATCHED` row whose active reservation event ID equals `sourceDriverReservedEventId`, then checks the original three-attempt/60-second budget. Duplicate or old requests do not start another attempt.
+
+### 4.10. `DriverAssignmentConfirmed`
+
+**Topic:** `driver-events` · **Producer:** driver-service · **Consumer:** trip-service; notification-service after M3 update. The envelope has `aggregateType=Trip`, `aggregateId=tripId`, `causationId=DriverAssigned.eventId`, and Kafka key `tripId`.
+
+```json
+{"tripId":"550e8400-e29b-41d4-a716-446655440000","driverId":"d0000000-0000-4000-8000-000000000001","reservationVersion":6,"driverAssignedEventId":"e0000000-0000-4000-8000-000000000003"}
+```
+
+Driver publishes this only after its atomic, live-lease `RESERVED -> BUSY` commit. Trip accepts it only for the currently pending command and before the original search deadline, then commits `ASSIGNING -> ASSIGNED` and `saga_log.DRIVER_RESERVED`.
+
+### 4.11. `DriverAssignmentRejected`
+
+Same topic, envelope and payload fields as `DriverAssignmentConfirmed`; published when the driver, trip, reservation version, or lease precondition fails. Trip returns `ASSIGNING -> SEARCHING` and emits `AssignmentRecoveryRequested` while time remains; otherwise it cancels. An unknown result at the deadline is cancelled without rematching, because Driver may have confirmed while the result was delayed.
+
 ## 5. Consumer Group Assignments
 
 | Consumer Service | Consumer Group ID | Topics Subscribed |
 |---|---|---|
 | matching-service | `matching-service-group` | `trip-events` |
-| trip-service | `trip-service-group` | `matching-events`, `payment-events` |
+| trip-service | `trip-service-group` | `matching-events`, `payment-events`, `driver-events` |
 | payment-service | `payment-service-group` | `trip-events` (for `trip.completed` only) |
 | driver-service | `driver-service-group` | `trip-events` |
-| notification-service | `notification-service-group` | `trip-events`, `matching-events`, `payment-events` |
+| notification-service | `notification-service-group` | `trip-events`, `matching-events`, `payment-events`, `driver-events` after M3 rollout |
 
 ### Event Type Filtering per Consumer
 
@@ -544,9 +580,10 @@ Each consumer filters by `eventType` within its subscribed topics:
 
 | Consumer | Topic | EventTypes Consumed |
 |---|---|---|
-| matching-service | `trip-events` | `RideRequested`, `TripCancelled` |
+| matching-service | `trip-events` | `RideRequested`, `TripCancelled`, `AssignmentRecoveryRequested` |
 | trip-service | `matching-events` | `DriverReserved` |
 | trip-service | `payment-events` | `PaymentSucceeded`, `PaymentFailed` |
+| trip-service | `driver-events` | `DriverAssignmentConfirmed`, `DriverAssignmentRejected` |
 | payment-service | `trip-events` | `TripCompleted` |
 | driver-service | `trip-events` | `DriverAssigned`, `TripCompleted`, `TripCancelled` |
 | notification-service | `trip-events` | `RideRequested`, `DriverAssigned`, `TripStarted`, `TripCompleted`, `TripCancelled` |
@@ -713,14 +750,20 @@ Complete event flow for a successful ride:
         |
         v  (saga_log: DRIVER_RESERVED)
 [5] trip-service consumes: driver.reserved
-        |  -> Trip status: SEARCHING -> ASSIGNED
+        |  -> If expired, publish AssignmentRecoveryRequested
+        |  -> If live, Trip status: SEARCHING -> ASSIGNING
         v
 [6] trip-service publishes: driver.assigned -> trip-events
         |
         v
 [6a] driver-service consumes: driver.assigned
-        |  -> Deduplication check
-        |  -> Driver status: RESERVED -> BUSY (clear reserved_until)
+        |  -> Deduplication and exact version/live lease check
+        |  -> Driver status: RESERVED -> BUSY, or reject
+        |  -> Publish DriverAssignmentConfirmed/Rejected -> driver-events
+        v
+[6b] trip-service consumes: DriverAssignmentConfirmed/Rejected
+        |  -> Confirmed: ASSIGNING -> ASSIGNED
+        |  -> Rejected: ASSIGNING -> SEARCHING and bounded recovery
         v
 [7] notification-service consumes all above events (fan-out)
         |

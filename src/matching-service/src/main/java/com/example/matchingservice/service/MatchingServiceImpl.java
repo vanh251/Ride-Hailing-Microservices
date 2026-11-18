@@ -11,7 +11,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.*;
 import org.springframework.web.client.RestClientException;
 import java.time.*;
 import java.util.*;
@@ -56,6 +55,7 @@ public class MatchingServiceImpl implements MatchingService {
             return;
         var p = event.getPayload();
         UUID tripId = uuid(p, "tripId"), passengerId = uuid(p, "passengerId");
+        Instant requestedAt = time(p, "requestedAt");
         if (!tripId.toString().equals(event.getAggregateId()))
             throw new ValidationException("Trip aggregate mismatch");
         var pickup = object(p, "pickup");
@@ -75,7 +75,7 @@ public class MatchingServiceImpl implements MatchingService {
                     .correlationId(event.getCorrelationId())
                     .status(MatchStatus.PENDING)
                     .attemptCount(1)
-                    .expiresAt(clock.instant().plusSeconds(searchTimeoutSeconds))
+                    .expiresAt(requestedAt.plusSeconds(searchTimeoutSeconds))
                     .build();
                 request = matchRequestRepository.saveAndFlush(request);
                 runMatch(request, event.getEventId().toString());
@@ -111,6 +111,48 @@ public class MatchingServiceImpl implements MatchingService {
 
     @Override
     @Transactional
+    public void handleAssignmentRecovery(EventEnvelope<Map<String, Object>> event) {
+        validate(event);
+        var eventKey = new ProcessedEventId(event.getEventId(), CONSUMER);
+        if (processedEventRepository.existsById(eventKey))
+            return;
+        if (!"Trip".equals(event.getAggregateType()) || !"trip-service".equals(event.getProducer()))
+            throw new ValidationException("Invalid recovery producer");
+        var payload = event.getPayload();
+        UUID tripId = uuid(payload, "tripId");
+        UUID source = uuid(payload, "sourceDriverReservedEventId");
+        String reason = text(payload, "reason");
+        if (!("LEASE_EXPIRED".equals(reason) || "DRIVER_REJECTED".equals(reason))
+                || !source.toString().equals(event.getCausationId()))
+            throw new ValidationException("Invalid assignment recovery reason/causation");
+        if (!tripId.toString().equals(event.getAggregateId()))
+            throw new ValidationException("Trip aggregate mismatch");
+        var request = required(tripId);
+        if (request.getStatus() == MatchStatus.MATCHED && source.equals(request.getActiveReservationEventId())) {
+            if (!"SEARCHING".equals(tripServiceClient.getTripStatus(tripId))) {
+                request.setStatus(MatchStatus.EXPIRED);
+                matchRequestRepository.save(request);
+            }
+            else if (exhausted(request)) {
+                tripServiceClient.cancelForMatchingTimeout(tripId, request.getCorrelationId());
+                request.setStatus(MatchStatus.EXPIRED);
+                matchRequestRepository.save(request);
+            }
+            else {
+                request.setStatus(MatchStatus.NO_DRIVER_FOUND);
+                request.setMatchedDriverId(null);
+                request.setActiveReservationEventId(null);
+                request.setActiveReservationVersion(null);
+                request.setActiveReservedUntil(null);
+                rematchDriver(tripId, request.getCorrelationId());
+            }
+        }
+        processedEventRepository.save(ProcessedEvent.builder().id(eventKey).processedAt(clock.instant())
+            .resultSummary("AssignmentRecoveryRequested:" + tripId).build());
+    }
+
+    @Override
+    @Transactional
     public MatchResponse matchDriver(UUID requestId, String correlationId) {
         var r = required(requestId);
         if (r.getStatus() == MatchStatus.MATCHED)
@@ -131,7 +173,6 @@ public class MatchingServiceImpl implements MatchingService {
         if (!"SEARCHING".equals(tripServiceClient.getTripStatus(r.getTripId())))
             throw new MatchingFailedException("Trip is no longer searching");
         if (r.getMatchedDriverId() != null) {
-            driverServiceClient.releaseDriverReservation(r.getMatchedDriverId(), r.getTripId());
             r.setMatchedDriverId(null);
         }
         r.setAttemptCount(r.getAttemptCount() + 1);
@@ -251,15 +292,6 @@ public class MatchingServiceImpl implements MatchingService {
                 driverOfferRepository.save(offer);
                 continue;
             }
-            boolean managed = TransactionSynchronizationManager.isSynchronizationActive();
-            if (managed)
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    @Override
-                    public void afterCompletion(int status) {
-                        if (status != STATUS_COMMITTED)
-                            compensate(d.getId(), r.getTripId());
-                    }
-                });
             try {
                 if (reservation == null || !"RESERVED".equals(reservation.getStatus())
                         || !d.getId().equals(reservation.getDriverId())
@@ -267,14 +299,15 @@ public class MatchingServiceImpl implements MatchingService {
                         || reservation.getReservedUntil() == null || reservation.getVersion() == null)
                     throw new RestClientException("Invalid driver reservation response");
                 if (!clock.instant().isBefore(reservation.getReservedUntil())) {
-                    driverServiceClient.releaseDriverReservation(d.getId(), r.getTripId());
+                    log.info("Expired reservation left to Driver lease cleanup driver={} trip={}", d.getId(), r.getTripId());
                     offer.setStatus(OfferStatus.EXPIRED);
                     offer.setRespondedAt(clock.instant());
                     driverOfferRepository.save(offer);
                     continue;
                 }
                 if (!"SEARCHING".equals(tripServiceClient.getTripStatus(r.getTripId()))) {
-                    driverServiceClient.releaseDriverReservation(d.getId(), r.getTripId());
+                    log.info("Unneeded reservation left to Driver lease/TripCancelled cleanup driver={} trip={}",
+                        d.getId(), r.getTripId());
                     r.setStatus(MatchStatus.EXPIRED);
                     matchRequestRepository.save(r);
                     return response(r);
@@ -284,6 +317,10 @@ public class MatchingServiceImpl implements MatchingService {
                 driverOfferRepository.save(offer);
                 r.setMatchedDriverId(d.getId());
                 r.setStatus(MatchStatus.MATCHED);
+                UUID reservationEventId = UUID.randomUUID();
+                r.setActiveReservationEventId(reservationEventId);
+                r.setActiveReservationVersion(reservation.getVersion());
+                r.setActiveReservedUntil(reservation.getReservedUntil());
                 matchRequestRepository.save(r);
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("tripId", r.getTripId());
@@ -293,8 +330,9 @@ public class MatchingServiceImpl implements MatchingService {
                 payload.put("driverLocation", d.getLocation());
                 payload.put("estimatedArrivalMin", Math.max(1, (int) Math.ceil(d.getDistanceKm() * 3)));
                 payload.put("reservedUntil", reservation.getReservedUntil());
+                payload.put("reservationVersion", reservation.getVersion());
                 eventPublisher.publish(EventEnvelope.builder()
-                    .eventId(UUID.randomUUID())
+                    .eventId(reservationEventId)
                     .eventType("DriverReserved")
                     .aggregateId(r.getTripId().toString())
                     .aggregateType("Trip")
@@ -307,23 +345,14 @@ public class MatchingServiceImpl implements MatchingService {
                 return response(r);
             }
             catch (RuntimeException ex) {
-                if (!managed)
-                    compensate(d.getId(), r.getTripId());
+                log.warn("Reservation attempt failed driver={} trip={}; Driver lease will clean up if held",
+                    d.getId(), r.getTripId(), ex);
                 throw ex;
             }
         }
         r.setStatus(MatchStatus.NO_DRIVER_FOUND);
         matchRequestRepository.save(r);
         return response(r);
-    }
-
-    private void compensate(UUID driverId, UUID tripId) {
-        try {
-            driverServiceClient.releaseDriverReservation(driverId, tripId);
-        }
-        catch (RuntimeException ex) {
-            log.error("Reservation rollback release failed driver={} trip={}; lease is fallback", driverId, tripId, ex);
-        }
     }
 
 }

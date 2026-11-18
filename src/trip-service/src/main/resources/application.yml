@@ -36,6 +36,9 @@ driver-service:
 pricing-service:
   url: ${PRICING_SERVICE_URL:http://pricing-service:8085}
 
+trip:
+  assignment-timeout-check-ms: ${TRIP_ASSIGNMENT_TIMEOUT_CHECK_MS:5000}
+
 management:
   endpoints:
     web:

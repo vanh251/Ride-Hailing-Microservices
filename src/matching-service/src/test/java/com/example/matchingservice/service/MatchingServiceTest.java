@@ -107,22 +107,22 @@ class MatchingServiceTest {
     }
 
     @Test
-    void outboxFailureCompensatesReservation() {
+    void outboxFailureLeavesReservationToLeaseRatherThanRiskingNewAttempt() {
         when(drivers.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble())).thenReturn(List.of(candidate(d1, 1)));
         var reserved = reservation(d1, clock.instant().plusSeconds(30));
         when(drivers.reserveDriver(d1, trip, 1)).thenReturn(reserved);
         doThrow(new IllegalStateException("outbox unavailable")).when(events).publish(any());
         assertThrows(IllegalStateException.class, () -> service.matchDriver(trip, null));
-        verify(drivers).releaseDriverReservation(d1, trip);
+        verify(drivers, never()).releaseDriverReservation(d1, trip);
     }
 
     @Test
-    void expiredReservationIsReleasedAndNeverPublished() {
+    void expiredReservationIsLeftToLeaseAndNeverPublished() {
         when(drivers.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble())).thenReturn(List.of(candidate(d1, 1)));
         var reserved = reservation(d1, clock.instant().minusSeconds(1));
         when(drivers.reserveDriver(d1, trip, 1)).thenReturn(reserved);
         assertEquals(MatchStatus.NO_DRIVER_FOUND, service.matchDriver(trip, null).getStatus());
-        verify(drivers).releaseDriverReservation(d1, trip);
+        verify(drivers, never()).releaseDriverReservation(d1, trip);
         verifyNoInteractions(events);
     }
 
@@ -143,7 +143,7 @@ class MatchingServiceTest {
         when(drivers.reserveDriver(d1, trip, 1)).thenReturn(reserved);
         when(trips.getTripStatus(trip)).thenReturn("CANCELLED");
         assertEquals(MatchStatus.EXPIRED, service.matchDriver(trip, null).getStatus());
-        verify(drivers).releaseDriverReservation(d1, trip);
+        verify(drivers, never()).releaseDriverReservation(d1, trip);
         verifyNoInteractions(events);
     }
 
@@ -154,6 +154,121 @@ class MatchingServiceTest {
         when(drivers.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble())).thenReturn(List.of(invalid));
         assertEquals(MatchStatus.NO_DRIVER_FOUND, service.matchDriver(trip, null).getStatus());
         verify(drivers, never()).reserveDriver(any(), any(), any());
+    }
+
+    @Test
+    void lateRideRequestedExpiresWithoutReserve() {
+        var event = rideRequested(clock.instant().minusSeconds(61));
+        when(requests.findByIdForUpdate(trip)).thenReturn(Optional.empty());
+        when(requests.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
+        service.handleRideRequested(event);
+        verifyNoInteractions(drivers);
+    }
+
+    @Test
+    void timelyRideRequestedUsesOriginalDeadline() {
+        var requestedAt = clock.instant().minusSeconds(12);
+        var event = rideRequested(requestedAt);
+        when(requests.findByIdForUpdate(trip)).thenReturn(Optional.empty());
+        when(requests.saveAndFlush(any())).thenAnswer(i -> i.getArgument(0));
+        when(drivers.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble())).thenReturn(List.of());
+        service.handleRideRequested(event);
+        var captor = ArgumentCaptor.forClass(MatchRequest.class);
+        verify(requests).saveAndFlush(captor.capture());
+        assertEquals(requestedAt.plusSeconds(60), captor.getValue().getExpiresAt());
+    }
+
+    @Test
+    void driverReservedCarriesActiveVersionAndEventId() {
+        when(drivers.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble())).thenReturn(List.of(candidate(d1, 1)));
+        var reserved = reservation(d1, clock.instant().plusSeconds(30));
+        when(drivers.reserveDriver(d1, trip, 1)).thenReturn(reserved);
+        service.matchDriver(trip, null);
+        var captor = ArgumentCaptor.forClass(EventEnvelope.class);
+        verify(events).publish(captor.capture());
+        var event = captor.getValue();
+        assertEquals(2, event.getPayload() instanceof Map<?, ?> p ? p.get("reservationVersion") : null);
+        assertEquals(event.getEventId(), org.springframework.test.util.ReflectionTestUtils.getField(request, "activeReservationEventId"));
+        assertEquals(2, org.springframework.test.util.ReflectionTestUtils.getField(request, "activeReservationVersion"));
+    }
+
+    private EventEnvelope<Map<String, Object>> rideRequested(Instant requestedAt) {
+        return EventEnvelope.<Map<String, Object>>builder()
+            .eventId(UUID.randomUUID()).eventType("RideRequested")
+            .aggregateId(trip.toString()).aggregateType("Trip")
+            .producer("trip-service").correlationId(request.getCorrelationId()).schemaVersion("1.0")
+            .occurredAt(requestedAt)
+            .payload(Map.of("tripId", trip.toString(), "passengerId", request.getPassengerId().toString(),
+                "pickup", Map.of("latitude", 21.0, "longitude", 105.0), "requestedAt", requestedAt.toString()))
+            .build();
+    }
+
+    @Test
+    void expiredAttemptRematchesOnce() {
+        UUID source = UUID.randomUUID();
+        request.setStatus(MatchStatus.MATCHED);
+        request.setMatchedDriverId(d1);
+        request.setActiveReservationEventId(source);
+        when(drivers.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble())).thenReturn(List.of());
+        service.handleAssignmentRecovery(recovery(source));
+        assertEquals(2, request.getAttemptCount());
+        assertEquals(MatchStatus.NO_DRIVER_FOUND, request.getStatus());
+        verify(drivers, never()).releaseDriverReservation(any(), any());
+    }
+
+    @Test
+    void oldAttemptCannotClearNewAttempt() {
+        request.setStatus(MatchStatus.MATCHED);
+        request.setMatchedDriverId(d2);
+        request.setActiveReservationEventId(UUID.randomUUID());
+        service.handleAssignmentRecovery(recovery(UUID.randomUUID()));
+        assertEquals(d2, request.getMatchedDriverId());
+        assertEquals(1, request.getAttemptCount());
+        verifyNoInteractions(drivers);
+    }
+
+    @Test
+    void duplicateRecoveryDoesNotIncrementAttempt() {
+        UUID source = UUID.randomUUID();
+        var event = recovery(source);
+        when(processed.existsById(new ProcessedEventId(event.getEventId(), "matching-service.trip-events")))
+            .thenReturn(true);
+        service.handleAssignmentRecovery(event);
+        assertEquals(1, request.getAttemptCount());
+    }
+
+    @Test
+    void exhaustedRecoveryCancelsTripOnce() {
+        UUID source = UUID.randomUUID();
+        request.setStatus(MatchStatus.MATCHED);
+        request.setActiveReservationEventId(source);
+        request.setAttemptCount(3);
+        service.handleAssignmentRecovery(recovery(source));
+        assertEquals(MatchStatus.EXPIRED, request.getStatus());
+        verify(trips).cancelForMatchingTimeout(trip, request.getCorrelationId());
+    }
+
+    @Test
+    void recoveryForNonSearchingTripDoesNotRematch() {
+        UUID source = UUID.randomUUID();
+        request.setStatus(MatchStatus.MATCHED);
+        request.setActiveReservationEventId(source);
+        when(trips.getTripStatus(trip)).thenReturn("CANCELLED");
+        service.handleAssignmentRecovery(recovery(source));
+        assertEquals(1, request.getAttemptCount());
+        verifyNoInteractions(drivers);
+    }
+
+    private EventEnvelope<Map<String, Object>> recovery(UUID source) {
+        return EventEnvelope.<Map<String, Object>>builder()
+            .eventId(UUID.randomUUID()).eventType("AssignmentRecoveryRequested")
+            .aggregateId(trip.toString()).aggregateType("Trip")
+            .producer("trip-service").correlationId(request.getCorrelationId()).schemaVersion("1.0")
+            .causationId(source.toString())
+            .occurredAt(clock.instant())
+            .payload(Map.of("tripId", trip.toString(), "sourceDriverReservedEventId", source.toString(),
+                "reason", "LEASE_EXPIRED"))
+            .build();
     }
 
 }
