@@ -157,7 +157,7 @@ class MatchingFlowIntegrationTest {
     }
 
     @Test
-    void commitFailureRollsBackAndReleasesExternalReservation() {
+    void commitFailureRollsBackAndLeavesDriverLeaseToExpire() {
         var e = event();
         UUID trip = UUID.fromString(e.getAggregateId());
         when(drivers.reserveDriver(driver, trip, 1)).thenAnswer(i -> {
@@ -179,7 +179,7 @@ class MatchingFlowIntegrationTest {
         assertFalse(requests.existsById(trip));
         assertFalse(processed.existsById(new ProcessedEventId(e.getEventId(), "matching-service.trip-events")));
         assertEquals(0, outbox.findAll().stream().filter(o -> o.getAggregateId().equals(trip.toString())).count());
-        verify(drivers).releaseDriverReservation(driver, trip);
+        verify(drivers, never()).releaseDriverReservation(driver, trip);
     }
 
     @Test
@@ -227,7 +227,7 @@ class MatchingFlowIntegrationTest {
         var recovery = EventEnvelope.<Map<String, Object>>builder()
             .eventId(UUID.randomUUID()).eventType("AssignmentRecoveryRequested")
             .aggregateId(trip.toString()).aggregateType("Trip").producer("trip-service")
-            .correlationId(ride.getCorrelationId()).occurredAt(Instant.now())
+            .correlationId(ride.getCorrelationId()).causationId(old.toString()).occurredAt(Instant.now())
             .payload(Map.of("tripId", trip.toString(), "sourceDriverReservedEventId", old.toString(),
                 "reason", "LEASE_EXPIRED")).build();
         tripEvents.onTripEvent(new ConsumerRecord<>("trip-events", 0, 0, trip.toString(),
@@ -238,12 +238,48 @@ class MatchingFlowIntegrationTest {
         var replay = EventEnvelope.<Map<String, Object>>builder()
             .eventId(UUID.randomUUID()).eventType("AssignmentRecoveryRequested")
             .aggregateId(trip.toString()).aggregateType("Trip").producer("trip-service")
-            .correlationId(ride.getCorrelationId()).occurredAt(Instant.now())
+            .correlationId(ride.getCorrelationId()).causationId(old.toString()).occurredAt(Instant.now())
             .payload(Map.of("tripId", trip.toString(), "sourceDriverReservedEventId", old.toString(),
                 "reason", "LEASE_EXPIRED")).build();
         tripEvents.onTripEvent(new ConsumerRecord<>("trip-events", 0, 1, trip.toString(),
             mapper.writeValueAsString(replay)));
         assertEquals(2, requests.findById(trip).orElseThrow().getAttemptCount());
+    }
+
+    @Test
+    void recoveryConsumerRejectsUnknownReasonWithoutRematching() {
+        var ride = event();
+        service.handleRideRequested(ride);
+        UUID trip = UUID.fromString(ride.getAggregateId());
+        UUID source = requests.findById(trip).orElseThrow().getActiveReservationEventId();
+        var invalid = recoveryEvent(trip, ride.getCorrelationId(), source, "BOGUS", source);
+        assertThrows(com.example.matchingservice.exception.ValidationException.class,
+            () -> tripEvents.onTripEvent(new ConsumerRecord<>("trip-events", 0, 0, trip.toString(),
+                mapper.writeValueAsString(invalid))));
+        assertEquals(1, requests.findById(trip).orElseThrow().getAttemptCount());
+    }
+
+    @Test
+    void recoveryConsumerRejectsUnrelatedCausationWithoutRematching() {
+        var ride = event();
+        service.handleRideRequested(ride);
+        UUID trip = UUID.fromString(ride.getAggregateId());
+        UUID source = requests.findById(trip).orElseThrow().getActiveReservationEventId();
+        var invalid = recoveryEvent(trip, ride.getCorrelationId(), source, "LEASE_EXPIRED", UUID.randomUUID());
+        assertThrows(com.example.matchingservice.exception.ValidationException.class,
+            () -> tripEvents.onTripEvent(new ConsumerRecord<>("trip-events", 0, 0, trip.toString(),
+                mapper.writeValueAsString(invalid))));
+        assertEquals(1, requests.findById(trip).orElseThrow().getAttemptCount());
+    }
+
+    private EventEnvelope<Map<String, Object>> recoveryEvent(UUID trip, String correlation, UUID source,
+            String reason, UUID cause) {
+        return EventEnvelope.<Map<String, Object>>builder()
+            .eventId(UUID.randomUUID()).eventType("AssignmentRecoveryRequested")
+            .aggregateId(trip.toString()).aggregateType("Trip").producer("trip-service")
+            .correlationId(correlation).causationId(cause.toString()).occurredAt(Instant.now())
+            .payload(Map.of("tripId", trip.toString(), "sourceDriverReservedEventId", source.toString(),
+                "reason", reason)).build();
     }
 
 }

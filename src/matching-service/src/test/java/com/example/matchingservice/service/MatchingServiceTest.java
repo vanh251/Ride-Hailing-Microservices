@@ -107,22 +107,22 @@ class MatchingServiceTest {
     }
 
     @Test
-    void outboxFailureCompensatesReservation() {
+    void outboxFailureLeavesReservationToLeaseRatherThanRiskingNewAttempt() {
         when(drivers.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble())).thenReturn(List.of(candidate(d1, 1)));
         var reserved = reservation(d1, clock.instant().plusSeconds(30));
         when(drivers.reserveDriver(d1, trip, 1)).thenReturn(reserved);
         doThrow(new IllegalStateException("outbox unavailable")).when(events).publish(any());
         assertThrows(IllegalStateException.class, () -> service.matchDriver(trip, null));
-        verify(drivers).releaseDriverReservation(d1, trip);
+        verify(drivers, never()).releaseDriverReservation(d1, trip);
     }
 
     @Test
-    void expiredReservationIsReleasedAndNeverPublished() {
+    void expiredReservationIsLeftToLeaseAndNeverPublished() {
         when(drivers.getAvailableDrivers(anyDouble(), anyDouble(), anyDouble())).thenReturn(List.of(candidate(d1, 1)));
         var reserved = reservation(d1, clock.instant().minusSeconds(1));
         when(drivers.reserveDriver(d1, trip, 1)).thenReturn(reserved);
         assertEquals(MatchStatus.NO_DRIVER_FOUND, service.matchDriver(trip, null).getStatus());
-        verify(drivers).releaseDriverReservation(d1, trip);
+        verify(drivers, never()).releaseDriverReservation(d1, trip);
         verifyNoInteractions(events);
     }
 
@@ -143,7 +143,7 @@ class MatchingServiceTest {
         when(drivers.reserveDriver(d1, trip, 1)).thenReturn(reserved);
         when(trips.getTripStatus(trip)).thenReturn("CANCELLED");
         assertEquals(MatchStatus.EXPIRED, service.matchDriver(trip, null).getStatus());
-        verify(drivers).releaseDriverReservation(d1, trip);
+        verify(drivers, never()).releaseDriverReservation(d1, trip);
         verifyNoInteractions(events);
     }
 
@@ -264,6 +264,7 @@ class MatchingServiceTest {
             .eventId(UUID.randomUUID()).eventType("AssignmentRecoveryRequested")
             .aggregateId(trip.toString()).aggregateType("Trip")
             .producer("trip-service").correlationId(request.getCorrelationId()).schemaVersion("1.0")
+            .causationId(source.toString())
             .occurredAt(clock.instant())
             .payload(Map.of("tripId", trip.toString(), "sourceDriverReservedEventId", source.toString(),
                 "reason", "LEASE_EXPIRED"))

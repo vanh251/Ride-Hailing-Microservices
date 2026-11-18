@@ -11,6 +11,8 @@
 
 > **W5 contract extension:** `DriverReserved` and `DriverAssigned` carry `reservationVersion`. Trip waits in `ASSIGNING` for a Driver outcome. New events are `AssignmentRecoveryRequested`, `DriverAssignmentConfirmed`, and `DriverAssignmentRejected`. Member 1 must implement the Driver outcome producer and M3 must provision `driver-events` before integrated deployment. The envelope `schemaVersion` stays `1.0` for these additive payload changes.
 
+> **Upgrade gate:** A queued W3 `DriverReserved` has no `reservationVersion` and W5 Trip sends it to DLQ. Drain old outboxes and Kafka lag, then resolve every `MATCHED` request whose Trip remains `SEARCHING` before cutover; see `docs/operations.md` §4.1. Do not replay old payloads into the new consumer.
+
 ---
 
 ## Table of Contents
