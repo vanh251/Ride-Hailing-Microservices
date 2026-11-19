@@ -18,9 +18,12 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 /**
- * Turns the 8 domain events (docs/events.md §5) into passenger and driver notifications.
+ * Turns the domain events of docs/events.md §5 into passenger and driver notifications.
+ * A trip has a driver only after DriverAssignmentConfirmed (docs/events.md §4.10): DriverReserved and
+ * DriverAssigned are tentative and notify nobody, and a rejected attempt's driver is never remembered.
  * Notifications are best-effort: a missing recipient is logged and skipped. A malformed message
  * is not swallowed; the error handler in KafkaConsumerConfig retries it and moves it to the DLQ.
  */
@@ -32,15 +35,19 @@ public class NotificationEventConsumer {
     public static final String TRIP_EVENTS_TOPIC = "trip-events";
     public static final String MATCHING_EVENTS_TOPIC = "matching-events";
     public static final String PAYMENT_EVENTS_TOPIC = "payment-events";
+    public static final String DRIVER_EVENTS_TOPIC = "driver-events";
     private static final String CORRELATION_ID_KEY = "correlationId";
     private static final String DEFAULT_CURRENCY = "VND";
+    // Their driverId belongs to an attempt that may not be (or never was) confirmed
+    private static final Set<String> TENTATIVE_DRIVER_EVENTS =
+            Set.of("DriverReserved", "DriverAssigned", "DriverAssignmentRejected", "TripCancelled");
 
     private final NotificationService notificationService;
     private final TripParticipantRegistry participantRegistry;
     private final ObjectMapper objectMapper;
 
     @KafkaListener(
-            topics = {TRIP_EVENTS_TOPIC, MATCHING_EVENTS_TOPIC, PAYMENT_EVENTS_TOPIC},
+            topics = {TRIP_EVENTS_TOPIC, MATCHING_EVENTS_TOPIC, PAYMENT_EVENTS_TOPIC, DRIVER_EVENTS_TOPIC},
             groupId = "${spring.kafka.consumer.group-id:notification-service-group}"
     )
     public void consumeDomainEvent(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
@@ -54,14 +61,14 @@ public class NotificationEventConsumer {
         try {
             JsonNode payload = root.path("payload");
             String tripId = payload.path("tripId").asText("");
-            participantRegistry.remember(tripId, text(payload, "passengerId"), text(payload, "driverId"));
+            participantRegistry.remember(tripId, text(payload, "passengerId"),
+                    TENTATIVE_DRIVER_EVENTS.contains(eventType) ? null : text(payload, "driverId"));
             log.info("Processing event: eventType={}, eventId={}, tripId={}, topic={}",
                     eventType, eventId, tripId, record.topic());
 
             switch (eventType) {
                 case "RideRequested" -> handleRideRequested(payload, tripId, correlationId);
-                case "DriverReserved" -> handleDriverReserved(payload, tripId, correlationId);
-                case "DriverAssigned" -> handleDriverAssigned(payload, tripId, correlationId);
+                case "DriverAssignmentConfirmed" -> handleDriverAssignmentConfirmed(payload, tripId, correlationId);
                 case "TripStarted" -> handleTripStarted(payload, tripId, correlationId);
                 case "TripCompleted" -> handleTripCompleted(payload, tripId, correlationId);
                 case "PaymentSucceeded" -> handlePaymentSucceeded(payload, tripId, correlationId);
@@ -80,16 +87,10 @@ public class NotificationEventConsumer {
                 "Ride Requested", "Searching for a driver nearby...");
     }
 
-    private void handleDriverReserved(JsonNode payload, String tripId, String correlationId) {
-        String driverName = payload.path("driverName").asText("");
-        String message = driverName.isBlank()
-                ? "A driver is heading to your pickup location."
-                : "Driver " + driverName + " is heading to your pickup location.";
-        notifyPassenger(payload, tripId, "DriverReserved", correlationId, "Driver Reserved", message);
-    }
-
-    private void handleDriverAssigned(JsonNode payload, String tripId, String correlationId) {
-        notifyDriver(payload, tripId, "DriverAssigned", correlationId,
+    private void handleDriverAssignmentConfirmed(JsonNode payload, String tripId, String correlationId) {
+        notifyPassenger(payload, tripId, "DriverAssignmentConfirmed", correlationId,
+                "Driver Assigned", "Driver found! Your driver is heading to your pickup location.");
+        notifyDriver(payload, tripId, "DriverAssignmentConfirmed", correlationId,
                 "New Trip Assigned", "You have been assigned trip " + tripId);
     }
 
@@ -123,9 +124,11 @@ public class NotificationEventConsumer {
         String suffix = reason.isBlank() ? "" : ": " + reason;
         notifyPassenger(payload, tripId, "TripCancelled", correlationId,
                 "Trip Cancelled", "Your trip was cancelled" + suffix);
-        // Only a trip that already had a driver notifies one
-        resolveDriver(payload, tripId).ifPresent(driverId -> notificationService.sendDriverNotification(
-                driverId, tripId, "Trip Cancelled", "Trip " + tripId + " was cancelled" + suffix, "TripCancelled", correlationId));
+        // Only a confirmed driver was told about the trip; an ASSIGNING trip's pending driver was not
+        if ("ASSIGNED".equals(payload.path("previousStatus").asText(""))) {
+            resolveDriver(payload, tripId).ifPresent(driverId -> notificationService.sendDriverNotification(
+                    driverId, tripId, "Trip Cancelled", "Trip " + tripId + " was cancelled" + suffix, "TripCancelled", correlationId));
+        }
     }
 
     private void notifyPassenger(JsonNode payload, String tripId, String eventType, String correlationId,
