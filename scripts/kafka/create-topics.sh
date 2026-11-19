@@ -13,9 +13,11 @@ TOPICS=(
   "trip-events:3"
   "matching-events:3"
   "payment-events:3"
+  "driver-events:3"
   "trip-events.DLQ:1"
   "matching-events.DLQ:1"
   "payment-events.DLQ:1"
+  "driver-events.DLQ:1"
 )
 
 for entry in "${TOPICS[@]}"; do
