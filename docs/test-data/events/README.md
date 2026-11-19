@@ -13,6 +13,8 @@ These files are the shared contract between the service that publishes an event 
 | `PaymentSucceeded.json` | payment-service | trip-service, notification-service |
 | `PaymentFailed.json` | payment-service | trip-service, notification-service |
 | `TripCancelled.json` | trip-service | driver-service, matching-service, notification-service |
+| `DriverAssignmentConfirmed.json` | driver-service | trip-service, notification-service |
+| `DriverAssignmentRejected.json` | driver-service | trip-service, notification-service |
 
 ## How to use them
 

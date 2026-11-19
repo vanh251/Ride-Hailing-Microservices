@@ -65,34 +65,58 @@ class NotificationEventConsumerTest {
     }
 
     @Test
-    @DisplayName("consumeDomainEvent handles DriverAssigned event")
-    void consumeDomainEvent_driverAssigned_sendsDriverNotification() {
+    @DisplayName("consumeDomainEvent sends no assignment notice for the tentative DriverReserved and DriverAssigned")
+    void consumeDomainEvent_reservedAndAssigned_notifyNobody() {
+        consume("matching-events", "DriverReserved", """
+                {"tripId": "%s", "driverId": "%s", "passengerId": "%s", "reservationVersion": 6}
+                """.formatted(TRIP_ID, DRIVER_ID, PASSENGER_ID));
         consume("trip-events", "DriverAssigned", """
-                {"tripId": "%s", "driverId": "%s", "passengerId": "%s"}
+                {"tripId": "%s", "driverId": "%s", "passengerId": "%s", "reservationVersion": 6}
                 """.formatted(TRIP_ID, DRIVER_ID, PASSENGER_ID));
 
-        verify(notificationService).sendDriverNotification(eq(DRIVER_ID), eq(TRIP_ID), eq("New Trip Assigned"),
-                anyString(), eq("DriverAssigned"), eq("corr-001"));
+        verifyNoInteractions(notificationService);
     }
 
     @Test
-    @DisplayName("consumeDomainEvent addresses DriverReserved (no passengerId in its payload) to the passenger seen in RideRequested")
-    void consumeDomainEvent_driverReservedWithoutPassengerId_usesPassengerFromRideRequested() {
+    @DisplayName("consumeDomainEvent notifies passenger and driver on DriverAssignmentConfirmed, passenger taken from RideRequested when absent")
+    void consumeDomainEvent_assignmentConfirmed_notifiesPassengerAndDriver() {
         consume("trip-events", "RideRequested", """
                 {"tripId": "%s", "passengerId": "%s"}
                 """.formatted(TRIP_ID, PASSENGER_ID));
-        consume("matching-events", "DriverReserved", """
-                {"tripId": "%s", "driverId": "%s", "driverName": "Tran Van B"}
+        consume("driver-events", "DriverAssignmentConfirmed", """
+                {"tripId": "%s", "driverId": "%s", "reservationVersion": 6}
                 """.formatted(TRIP_ID, DRIVER_ID));
 
-        verify(notificationService).sendPassengerNotification(eq(PASSENGER_ID), eq(TRIP_ID), eq("Driver Reserved"),
-                contains("Tran Van B"), eq("DriverReserved"), eq("corr-001"));
+        verify(notificationService).sendPassengerNotification(eq(PASSENGER_ID), eq(TRIP_ID), eq("Driver Assigned"),
+                anyString(), eq("DriverAssignmentConfirmed"), eq("corr-001"));
+        verify(notificationService).sendDriverNotification(eq(DRIVER_ID), eq(TRIP_ID), eq("New Trip Assigned"),
+                anyString(), eq("DriverAssignmentConfirmed"), eq("corr-001"));
+    }
+
+    @Test
+    @DisplayName("consumeDomainEvent never addresses the driver of a rejected attempt")
+    void consumeDomainEvent_rejectedAttempt_driverIsNotRemembered() {
+        String rejectedDriver = "d0000000-0000-4000-8000-000000000002";
+        String attempt = """
+                {"tripId": "%s", "driverId": "%s", "passengerId": "%s", "reservationVersion": 6}
+                """.formatted(TRIP_ID, rejectedDriver, PASSENGER_ID);
+        consume("matching-events", "DriverReserved", attempt);
+        consume("trip-events", "DriverAssigned", attempt);
+        consume("driver-events", "DriverAssignmentRejected", attempt);
+        consume("trip-events", "TripCancelled", """
+                {"tripId": "%s", "driverId": "%s", "passengerId": "%s", "previousStatus": "ASSIGNING"}
+                """.formatted(TRIP_ID, rejectedDriver, PASSENGER_ID));
+        consume("payment-events", "PaymentSucceeded", """
+                {"tripId": "%s", "passengerId": "%s", "amount": 47500.0}
+                """.formatted(TRIP_ID, PASSENGER_ID));
+
+        verify(notificationService, never()).sendDriverNotification(any(), any(), any(), any(), any(), any());
     }
 
     @Test
     @DisplayName("consumeDomainEvent notifies the driver of PaymentSucceeded (no driverId in its payload) from earlier trip events")
     void consumeDomainEvent_paymentSucceeded_sendsPassengerAndDriverNotifications() {
-        consume("trip-events", "DriverAssigned", """
+        consume("driver-events", "DriverAssignmentConfirmed", """
                 {"tripId": "%s", "driverId": "%s", "passengerId": "%s"}
                 """.formatted(TRIP_ID, DRIVER_ID, PASSENGER_ID));
         consume("payment-events", "PaymentSucceeded", """

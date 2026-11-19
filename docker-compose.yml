@@ -121,7 +121,7 @@ services:
     networks:
       - ride-hailing-network
 
-  # Creates the 6 topics of docs/events.md §3 (3 partitions, DLQ 1 partition), then exits
+  # Creates the 8 topics of docs/events.md §3 (3 partitions, DLQ 1 partition), then exits
   kafka-init:
     image: apache/kafka:3.8.0
     container_name: kafka-init

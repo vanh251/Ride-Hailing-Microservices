@@ -52,8 +52,10 @@ class EventContractTest {
     @DisplayName("consumeDomainEvent notifies the recipients of docs/events.md for each fixture")
     @CsvSource({
             "trip-events,     RideRequested,    PASSENGER",
-            "matching-events, DriverReserved,   PASSENGER",
-            "trip-events,     DriverAssigned,   DRIVER",
+            "matching-events, DriverReserved,   ''",
+            "trip-events,     DriverAssigned,   ''",
+            "driver-events,   DriverAssignmentConfirmed, PASSENGER DRIVER",
+            "driver-events,   DriverAssignmentRejected,  ''",
             "trip-events,     TripStarted,      PASSENGER",
             "trip-events,     TripCompleted,    PASSENGER",
             "payment-events,  PaymentSucceeded, PASSENGER DRIVER",
@@ -61,9 +63,9 @@ class EventContractTest {
             "trip-events,     TripCancelled,    PASSENGER DRIVER"
     })
     void consumeDomainEvent_fixture_notifiesExpectedRecipients(String topic, String eventType, String recipients) throws IOException {
-        // PaymentSucceeded names no driver: the driver is known from the trip's earlier DriverAssigned
-        if (eventType.equals("PaymentSucceeded")) {
-            consume("trip-events", "DriverAssigned");
+        // PaymentSucceeded names no driver, and a cancelled ASSIGNED trip had one: known from the confirmation
+        if (eventType.equals("PaymentSucceeded") || eventType.equals("TripCancelled")) {
+            consume("driver-events", "DriverAssignmentConfirmed");
         }
         int before = notificationService.getRecentNotifications().size();
 
@@ -75,6 +77,7 @@ class EventContractTest {
                 .map(n -> n.getRecipientType() + ":" + n.getRecipientId())
                 .collect(Collectors.toSet());
         Set<String> expected = Set.of(recipients.split(" ")).stream()
+                .filter(type -> !type.isBlank())
                 .map(type -> type + ":" + (RecipientType.valueOf(type) == RecipientType.PASSENGER ? PASSENGER : DRIVER))
                 .collect(Collectors.toSet());
         assertEquals(expected, actual);

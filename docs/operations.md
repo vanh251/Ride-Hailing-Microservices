@@ -12,7 +12,7 @@ All scripts are bash and run from the repository root (Git Bash on Windows).
 | Stop (keep data) / stop and delete data | `scripts/stop.sh` / `scripts/stop.sh -v` |
 | Logs of one service | `docker compose logs -f payment-service` |
 
-`start.sh` creates `.env` from `.env.example` when it is missing. `kafka-init` creates the 6 topics
+`start.sh` creates `.env` from `.env.example` when it is missing. `kafka-init` creates the 8 topics
 before any Kafka-using service starts. The first build downloads Gradle and all dependencies once; the
 services share that cache and build their jars one after another.
 
@@ -59,9 +59,9 @@ Result on 2026-11-13: all three scenarios passed.
 
 To demo the `PaymentFailed` saga path, set `PAYMENT_FAILURE_MODE=always` in `.env` and restart payment-service.
 
-## 4.1. Member 2 W5 assignment recovery demo (pending M1/M3 handoff)
+## 4.1. W5 assignment saga demo (pending M1 handoff)
 
-Preconditions: deploy the W5 Trip and Matching images together; apply `scripts/db/2026-11-19-m2-w5-trip.sql` to `trip_db` and `scripts/db/2026-11-19-m2-w5-matching.sql` to `matching_db`; have M1 deploy the version/lease-fenced Driver transition and `DriverAssignmentConfirmed`/`DriverAssignmentRejected` outbox producer; have M3 provision `driver-events` (3 partitions) and `driver-events.DLQ` (1 partition) and move definitive assignment notifications from `DriverAssigned` to `DriverAssignmentConfirmed`. Existing W3 Driver does not produce these events, so it cannot complete this demo. Existing Notification may announce a driver whose assignment is later rejected; do not enable customer notifications until M3 updates that consumer.
+Preconditions: deploy the W5 Trip and Matching images together; apply `scripts/db/2026-11-19-m2-w5-trip.sql` to `trip_db` and `scripts/db/2026-11-19-m2-w5-matching.sql` to `matching_db`; have M1 deploy the version/lease-fenced Driver transition and `DriverAssignmentConfirmed`/`DriverAssignmentRejected` outbox producer; M3 is done: `kafka-init` creates `driver-events` (3 partitions) and `driver-events.DLQ` (1 partition), and Notification announces an assignment only on `DriverAssignmentConfirmed`. Existing W3 Driver does not produce these events, so it cannot complete this demo.
 
 **Cutover from W3 data:** Stop new requests at the Gateway before changing binaries, then leave the old Trip/Matching/Driver consumers and outbox relays running until their relevant topic lag is zero and their outboxes have no pending `DriverReserved`/`DriverAssigned`. Inspect with:
 
@@ -97,6 +97,26 @@ docker compose exec -T trip-db psql -U postgres -d trip_db -c "SELECT step_name,
 docker compose exec -T matching-db psql -U postgres -d matching_db -c "SELECT request_id,status,attempt_count,matched_driver_id,active_reservation_event_id FROM match_requests WHERE trip_id='TRIP_UUID';"
 docker compose exec -T driver-db psql -U postgres -d driver_db -c "SELECT driver_id,status,reserved_for_trip,reserved_until,version FROM drivers WHERE reserved_for_trip='TRIP_UUID';"
 ```
+
+Notification, lag and DLQ checks for every scenario (Git Bash; `TRIP_UUID` as above):
+
+```bash
+curl -s http://localhost:8087/api/notifications/trip/TRIP_UUID     # who was told what
+MSYS_NO_PATHCONV=1 docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092   --topic driver-events --from-beginning --timeout-ms 5000 | grep TRIP_UUID          # confirmed/rejected outcomes
+for g in trip-service-group driver-service-group notification-service-group matching-service-group; do
+  MSYS_NO_PATHCONV=1 docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group $g
+done                                                                                 # LAG column must reach 0
+scripts/kafka/tail-dlq.sh                                                            # all four DLQ topics
+```
+
+| Scenario | Notifications expected |
+|---|---|
+| Happy path (`scripts/e2e-happy-path.sh`) | Passenger: Ride Requested, Driver Assigned, Trip Started, Trip Completed, Payment Succeeded. Driver: New Trip Assigned, Payment Received |
+| Rejected attempt, then rematch | Nothing for the rejected driver; Driver Assigned / New Trip Assigned only for the confirmed one |
+| Cancelled while `ASSIGNING` (deadline passed) | Passenger: Trip Cancelled. No driver notification |
+| Cancelled after `ASSIGNED` | Passenger and confirmed driver: Trip Cancelled |
+
+Notification keeps the confirmed driver of a trip in memory: after a notification-service restart, `PaymentSucceeded` (no `driverId` in its payload) cannot notify the driver of a trip confirmed before the restart.
 
 Record the trip UUID, Kafka event IDs, database output, and stop/start timestamps. Do not treat a unit test or a paused service without these state checks as the completed fault demo.
 

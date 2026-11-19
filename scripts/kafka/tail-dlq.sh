@@ -3,7 +3,7 @@
 # so a member can see which event a consumer rejected and why.
 #
 # Usage:
-#   scripts/kafka/tail-dlq.sh                 # all three DLQ topics, from the beginning
+#   scripts/kafka/tail-dlq.sh                 # all four DLQ topics, from the beginning
 #   scripts/kafka/tail-dlq.sh trip-events     # only trip-events.DLQ
 #   FOLLOW=true scripts/kafka/tail-dlq.sh     # keep waiting for new messages (Ctrl+C to stop)
 set -euo pipefail
@@ -11,7 +11,7 @@ set -euo pipefail
 KAFKA_CONTAINER="${KAFKA_CONTAINER:-kafka}"
 FOLLOW="${FOLLOW:-false}"
 TOPICS=("${1:-trip-events}" )
-[ $# -eq 0 ] && TOPICS=(trip-events matching-events payment-events)
+[ $# -eq 0 ] && TOPICS=(trip-events matching-events payment-events driver-events)
 
 for topic in "${TOPICS[@]}"; do
   dlq="${topic%.DLQ}.DLQ"

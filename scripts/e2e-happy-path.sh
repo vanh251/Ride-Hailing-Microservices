@@ -1,7 +1,8 @@
 #!/bin/bash
 # End-to-end Happy Path of W3 (docs/timeline.md §5), run through the API Gateway:
-#   Register → Login → Driver AVAILABLE → Passenger creates Trip → Matching → Driver selected
-#   → Driver Accept → Start Trip → Complete Trip → Calculate Fare → Payment → Notification
+#   Register → Login → Driver AVAILABLE → Passenger creates Trip → Matching → ASSIGNING
+#   → DriverAssignmentConfirmed → ASSIGNED → Driver Accept → Start Trip → Complete Trip
+#   → Calculate Fare → Payment → Notification  (W5 saga, docs/events.md §9)
 # Every step checks its result and the script stops at the first failure, saying which step broke.
 #
 # Usage:   scripts/e2e-happy-path.sh
@@ -50,20 +51,24 @@ call() {
 
 expect_status() { [ "$STATUS" = "$1" ] || fail "expected HTTP $1, got $STATUS"; }
 
-# wait_trip_status <status> : polls GET /api/trips/{id} until the trip reaches the status
+# wait_trip_status <status> : polls GET /api/trips/{id} until the trip reaches the status;
+# SEEN_STATUSES keeps every status observed on the way
+SEEN_STATUSES=""
 wait_trip_status() {
-  local deadline=$((SECONDS + WAIT_SECONDS))
+  local deadline=$((SECONDS + WAIT_SECONDS)) status
   while [ $SECONDS -lt $deadline ]; do
     call GET "/api/trips/$TRIP_ID" "" "$PASSENGER_TOKEN"
-    [ "$(json status)" = "$1" ] && return 0
-    sleep 1
+    status=$(json status)
+    case " $SEEN_STATUSES " in *" $status "*) ;; *) SEEN_STATUSES="$SEEN_STATUSES $status" ;; esac
+    [ "$status" = "$1" ] && return 0
+    sleep 0.2
   done
   fail "trip is still $(json status) after ${WAIT_SECONDS}s, expected $1"
 }
 
 dlq_size() {
   MSYS_NO_PATHCONV=1 docker exec "$KAFKA_CONTAINER" /opt/kafka/bin/kafka-get-offsets.sh \
-    --bootstrap-server localhost:9092 --topic-partitions 'trip-events.DLQ,matching-events.DLQ,payment-events.DLQ' 2>/dev/null \
+    --bootstrap-server localhost:9092 --topic-partitions 'trip-events.DLQ,matching-events.DLQ,payment-events.DLQ,driver-events.DLQ' 2>/dev/null \
     | awk -F: '{sum += $3} END {print sum + 0}'
 }
 
@@ -105,12 +110,20 @@ expect_status 201; TRIP_ID=$(json tripId)
 [ "$(json passengerId)" = "$PASSENGER_ID" ] || fail "trip passengerId $(json passengerId) is not the logged-in passenger $PASSENGER_ID (gateway X-User-Id)"
 pass "trip $TRIP_ID, estimatedFare $(json estimatedFare)"
 
-step "Matching selects the driver (trip ASSIGNED)"
+step "Matching reserves the driver, Driver confirms (trip ASSIGNING -> ASSIGNED)"
 wait_trip_status ASSIGNED
 [ "$(json driverId)" = "$DRIVER_ID" ] || fail "assigned driver $(json driverId), expected $DRIVER_ID"
-pass "driver $DRIVER_ID assigned"
+case "$SEEN_STATUSES" in
+  *ASSIGNING*) pass "trip went through ASSIGNING ($SEEN_STATUSES )" ;;
+  *) pass "ASSIGNING lasted less than one poll (seen:$SEEN_STATUSES )" ;;
+esac
+# ASSIGNED is only accepted when driver-service published the confirmation of this trip
+CONFIRMATION=$(MSYS_NO_PATHCONV=1 docker exec "$KAFKA_CONTAINER" /opt/kafka/bin/kafka-console-consumer.sh   --bootstrap-server localhost:9092 --topic driver-events --from-beginning --timeout-ms 5000 2>/dev/null   | grep "\"tripId\":\"$TRIP_ID\"" | grep '"eventType":"DriverAssignment' || true)
+BODY="$CONFIRMATION"
+printf '%s' "$CONFIRMATION" | grep -q '"eventType":"DriverAssignmentConfirmed"' || fail "no DriverAssignmentConfirmed on driver-events for the trip"
+pass "DriverAssignmentConfirmed eventId $(json eventId), driver $DRIVER_ID assigned"
 call GET "/api/drivers/$DRIVER_ID" "" "$DRIVER_TOKEN"
-[ "$(json status)" = "BUSY" ] || fail "driver status is $(json status), expected BUSY after DriverAssigned"
+[ "$(json status)" = "BUSY" ] || fail "driver status is $(json status), expected BUSY after DriverAssignmentConfirmed"
 pass "driver BUSY"
 
 step "Driver accepts, starts and completes the trip"
@@ -138,16 +151,19 @@ pass "driver AVAILABLE"
 step "Passenger and driver are notified"
 call GET "/api/notifications/trip/$TRIP_ID" "" "$PASSENGER_TOKEN"
 expect_status 200
-for title in "Ride Requested" "Driver Reserved" "Trip Started" "Trip Completed" "Payment Succeeded"; do
+for title in "Ride Requested" "Driver Assigned" "Trip Started" "Trip Completed" "Payment Succeeded"; do
   printf '%s' "$BODY" | grep -q "\"recipientType\":\"PASSENGER\",\"recipientId\":\"$PASSENGER_ID\",\"tripId\":\"$TRIP_ID\",\"title\":\"$title\"" \
     || fail "passenger did not get \"$title\""
 done
-pass "passenger: Ride Requested, Driver Reserved, Trip Started, Trip Completed, Payment Succeeded"
+pass "passenger: Ride Requested, Driver Assigned, Trip Started, Trip Completed, Payment Succeeded"
 for title in "New Trip Assigned" "Payment Received"; do
   printf '%s' "$BODY" | grep -q "\"recipientType\":\"DRIVER\",\"recipientId\":\"$DRIVER_ID\",\"tripId\":\"$TRIP_ID\",\"title\":\"$title\"" \
     || fail "driver did not get \"$title\""
 done
 pass "driver: New Trip Assigned, Payment Received"
+
+printf '%s' "$BODY" | grep -q '"title":"Driver Reserved"' && fail "a tentative reservation was notified as an assignment"
+pass "no notification before the confirmation"
 
 step "No event was rejected"
 DLQ_AFTER=$(dlq_size)

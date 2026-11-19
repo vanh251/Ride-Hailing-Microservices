@@ -55,6 +55,7 @@ case "$EVENT_TYPE" in
   RideRequested|DriverAssigned|TripStarted|TripCompleted|TripCancelled) TOPIC="trip-events" ;;
   DriverReserved) TOPIC="matching-events" ;;
   PaymentSucceeded|PaymentFailed) TOPIC="payment-events" ;;
+  DriverAssignmentConfirmed|DriverAssignmentRejected) TOPIC="driver-events" ;;
   *) echo "Unknown event type '$EVENT_TYPE' (docs/events.md §4)" >&2; exit 1 ;;
 esac
 

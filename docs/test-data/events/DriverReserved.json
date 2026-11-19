@@ -18,6 +18,7 @@
       "longitude": 105.8545
     },
     "estimatedArrivalMin": 3,
-    "reservedUntil": "2026-09-30T10:00:35Z"
+    "reservedUntil": "2026-09-30T10:00:35Z",
+    "reservationVersion": 6
   }
 }
