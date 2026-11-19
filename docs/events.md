@@ -9,7 +9,7 @@
 
 > **Changes in 1.1.0 (lead decisions, 18/10/2026):** PascalCase `eventType`, plain-UUID ids and money as JSON numbers (§2 Value Conventions); Trip calls Pricing `/final` and Payment charges `finalFare` from `TripCompleted` without calling Pricing (§4.5); required `TripCompleted` payload fields (§4.5); `passengerId` added to `DriverReserved` (§4.2); payment events keep their payload, `causationId` = `TripCompleted.eventId` (§4.6, §4.7); `TripCompleted` is the only trigger of a charge (§4.5); cancellation releases the driver through both `DELETE /reserve` and `TripCancelled`, both idempotent (§4.8); `trip-events` consumer list completed (§3).
 
-> **W5 contract extension:** `DriverReserved` and `DriverAssigned` carry `reservationVersion`. Trip waits in `ASSIGNING` for a Driver outcome. New events are `AssignmentRecoveryRequested`, `DriverAssignmentConfirmed`, and `DriverAssignmentRejected`. Member 1 must implement the Driver outcome producer and M3 must provision `driver-events` before integrated deployment. The envelope `schemaVersion` stays `1.0` for these additive payload changes.
+> **W5 contract extension:** `DriverReserved` and `DriverAssigned` carry `reservationVersion`. Trip waits in `ASSIGNING` for a Driver outcome. New events are `AssignmentRecoveryRequested`, `DriverAssignmentConfirmed`, and `DriverAssignmentRejected`. Member 1 must implement the Driver outcome producer; M3 provisions `driver-events` (`scripts/kafka/create-topics.sh`) and Notification consumes it. The envelope `schemaVersion` stays `1.0` for these additive payload changes.
 
 > **Upgrade gate:** A queued W3 `DriverReserved` has no `reservationVersion` and W5 Trip sends it to DLQ. Drain old outboxes and Kafka lag, then resolve every `MATCHED` request whose Trip remains `SEARCHING` before cutover; see `docs/operations.md` §4.1. Do not replay old payloads into the new consumer.
 
@@ -119,7 +119,7 @@ All events share a common envelope:
 | `trip-events` | 3 | trip-service | matching-service, payment-service, driver-service, notification-service | Trip lifecycle events |
 | `matching-events` | 3 | matching-service | trip-service, notification-service | Driver matching results |
 | `payment-events` | 3 | payment-service | trip-service, notification-service | Payment results |
-| `driver-events` | 3 | driver-service | trip-service, notification-service | Driver assignment outcomes (W5 rollout pending) |
+| `driver-events` | 3 | driver-service | trip-service, notification-service | Driver assignment outcomes |
 | `trip-events.DLQ` | 1 | Kafka (auto) | Manual / monitoring | Dead letters from trip-events |
 | `matching-events.DLQ` | 1 | Kafka (auto) | Manual / monitoring | Dead letters from matching-events |
 | `payment-events.DLQ` | 1 | Kafka (auto) | Manual / monitoring | Dead letters from payment-events |
@@ -234,7 +234,7 @@ A driver has been successfully reserved by the Matching Service (CAS lock acquir
 | Consumer | Action |
 |---|---|
 | trip-service | If lease expired, request bounded recovery. Otherwise commit `SEARCHING -> ASSIGNING` and a `DriverAssigned` outbox row; do not expose `ASSIGNED` yet |
-| notification-service | Notify passenger (`payload.passengerId`): "Driver found! [name] is on the way" |
+| notification-service | No notification: the reservation is tentative until `DriverAssignmentConfirmed` (§4.10) |
 
 > `passengerId` (contract v1.1) is copied by Matching Service from the `RideRequested` that started the match, so Notification Service can address the passenger without another lookup.
 
@@ -278,7 +278,7 @@ A driver has been formally assigned to the trip by Trip Service.
 | Consumer | Action |
 |---|---|
 | driver-service | Dedup via `eventId`; atomically require matching trip, exact reservation version, `RESERVED`, and live lease before `RESERVED -> BUSY`. Publish one confirmed/rejected outcome from outbox. Member 1 implementation pending |
-| notification-service | Defer definitive assignment notice until `DriverAssignmentConfirmed`; M3 implementation pending |
+| notification-service | No notification: the assignment is tentative until `DriverAssignmentConfirmed` (§4.10) |
 
 ---
 
@@ -533,7 +533,7 @@ A trip has been cancelled by the passenger (or timeout).
 | driver-service | Dedup via `eventId` → find driver by `driverId`; if `driverId` is missing, by `reserved_for_trip = tripId` → release `RESERVED/BUSY -> AVAILABLE` only if `drivers.reserved_for_trip = tripId`; clear `reserved_for_trip` and `reserved_until`, `version + 1`. No match (no driver assigned yet, or driver already on another trip) → log and skip |
 | matching-service | Cancel any in-progress matching job |
 | notification-service | Notify passenger: "Trip cancelled" |
-| notification-service | Notify driver (if assigned): "Trip has been cancelled" |
+| notification-service | Notify driver only when `previousStatus = ASSIGNED` (confirmed driver): "Trip has been cancelled". The pending driver of an `ASSIGNING` trip was never told about it |
 
 > **Two compensation paths (contract v1.1; safe commit ordering clarified in M2 W3):** Trip Service commits cancellation and its outbox together, then attempts `DELETE /api/drivers/{driverId}/reserve?tripId={tripId}` in an after-commit callback before the HTTP request returns. It never releases externally for a cancellation that rolls back. The outbox relay and REST compensation may race after commit; both paths are safe because each acts only while `drivers.reserved_for_trip = tripId`, so the second finds nothing to release. REST failure is logged and the event/lease remain fallback cleanup paths.
 
@@ -552,17 +552,24 @@ Trip commits this event in its outbox when a `DriverReserved` lease is already e
 
 ### 4.10. `DriverAssignmentConfirmed`
 
-**Topic:** `driver-events` · **Producer:** driver-service · **Consumer:** trip-service; notification-service after M3 update. The envelope has `aggregateType=Trip`, `aggregateId=tripId`, `causationId=DriverAssigned.eventId`, and Kafka key `tripId`.
+**Topic:** `driver-events` · **Producer:** driver-service · **Consumers:** trip-service, notification-service. The envelope has `aggregateType=Trip`, `aggregateId=tripId`, `causationId=DriverAssigned.eventId`, and Kafka key `tripId`.
 
 ```json
-{"tripId":"550e8400-e29b-41d4-a716-446655440000","driverId":"d0000000-0000-4000-8000-000000000001","reservationVersion":6,"driverAssignedEventId":"e0000000-0000-4000-8000-000000000003"}
+{"tripId":"550e8400-e29b-41d4-a716-446655440000","driverId":"d0000000-0000-4000-8000-000000000001","passengerId":"a0000000-0000-4000-8000-000000000001","reservationVersion":6,"driverAssignedEventId":"e0000000-0000-4000-8000-000000000003"}
 ```
+
+`passengerId` is copied by Driver Service from `DriverAssigned`, so Notification can address the passenger after a restart (agreed M1/M2/M3; trip-service ignores it). Fixtures: `docs/test-data/events/DriverAssignmentConfirmed.json`, `DriverAssignmentRejected.json`.
+
+| Consumer | Action |
+|---|---|
+| trip-service | See below |
+| notification-service | Notify passenger: "Driver found! Your driver is heading to your pickup location." Notify driver: "You have been assigned trip [id]". From now on this is the trip's driver for later notifications |
 
 Driver publishes this only after its atomic, live-lease `RESERVED -> BUSY` commit. Trip accepts it only for the currently pending command and before the original search deadline, then commits `ASSIGNING -> ASSIGNED` and `saga_log.DRIVER_RESERVED`.
 
 ### 4.11. `DriverAssignmentRejected`
 
-Same topic, envelope and payload fields as `DriverAssignmentConfirmed`; published when the driver, trip, reservation version, or lease precondition fails. Trip returns `ASSIGNING -> SEARCHING` and emits `AssignmentRecoveryRequested` while time remains; otherwise it cancels. An unknown result at the deadline is cancelled without rematching, because Driver may have confirmed while the result was delayed.
+Same topic, envelope and payload fields as `DriverAssignmentConfirmed`. notification-service sends nothing and never uses this `driverId` for the trip. Published when the driver, trip, reservation version, or lease precondition fails. Trip returns `ASSIGNING -> SEARCHING` and emits `AssignmentRecoveryRequested` while time remains; otherwise it cancels. An unknown result at the deadline is cancelled without rematching, because Driver may have confirmed while the result was delayed.
 
 ## 5. Consumer Group Assignments
 
@@ -572,7 +579,7 @@ Same topic, envelope and payload fields as `DriverAssignmentConfirmed`; publishe
 | trip-service | `trip-service-group` | `matching-events`, `payment-events`, `driver-events` |
 | payment-service | `payment-service-group` | `trip-events` (for `trip.completed` only) |
 | driver-service | `driver-service-group` | `trip-events` |
-| notification-service | `notification-service-group` | `trip-events`, `matching-events`, `payment-events`, `driver-events` after M3 rollout |
+| notification-service | `notification-service-group` | `trip-events`, `matching-events`, `payment-events`, `driver-events` |
 
 ### Event Type Filtering per Consumer
 
@@ -586,9 +593,9 @@ Each consumer filters by `eventType` within its subscribed topics:
 | trip-service | `driver-events` | `DriverAssignmentConfirmed`, `DriverAssignmentRejected` |
 | payment-service | `trip-events` | `TripCompleted` |
 | driver-service | `trip-events` | `DriverAssigned`, `TripCompleted`, `TripCancelled` |
-| notification-service | `trip-events` | `RideRequested`, `DriverAssigned`, `TripStarted`, `TripCompleted`, `TripCancelled` |
-| notification-service | `matching-events` | `DriverReserved` |
+| notification-service | `trip-events` | `RideRequested`, `TripStarted`, `TripCompleted`, `TripCancelled` |
 | notification-service | `payment-events` | `PaymentSucceeded`, `PaymentFailed` |
+| notification-service | `driver-events` | `DriverAssignmentConfirmed` |
 
 > driver-service follows the same consumer rules as the other services: dedup via `processed_events` (§7), bounded retry (§8), then `trip-events.DLQ` (§6). Other event types on `trip-events` are ignored.
 
