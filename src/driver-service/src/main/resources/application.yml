@@ -21,7 +21,7 @@ spring:
     open-in-view: false
 
   # Consumes trip-events: DriverAssigned, TripCompleted, TripCancelled (docs/events.md §5).
-  # The producer is only used to move failed records to trip-events.DLQ.
+  # The producer publishes the outbox to driver-events and moves failed records to trip-events.DLQ.
   kafka:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
     consumer:
@@ -58,6 +58,12 @@ driver:
     lease-seconds: ${DRIVER_RESERVATION_LEASE_SECONDS:30}
     expiry-check-ms: ${DRIVER_RESERVATION_EXPIRY_CHECK_MS:5000}
     expiry-check-enabled: true
+  # Outbox of driver_db: DriverAssignmentConfirmed / DriverAssignmentRejected are sent to driver-events every
+  # poll-interval-ms; a send that the broker does not acknowledge within ack-timeout-ms is retried on the next run.
+  outbox:
+    enabled: ${DRIVER_OUTBOX_ENABLED:true}
+    poll-interval-ms: ${DRIVER_OUTBOX_POLL_INTERVAL_MS:1000}
+    ack-timeout-ms: ${DRIVER_OUTBOX_ACK_TIMEOUT_MS:5000}
 
 management:
   endpoints:

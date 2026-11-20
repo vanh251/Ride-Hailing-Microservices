@@ -2,7 +2,9 @@ package com.example.driverservice;
 
 import com.example.driverservice.entity.Driver;
 import com.example.driverservice.entity.DriverStatus;
+import com.example.driverservice.entity.OutboxEvent;
 import com.example.driverservice.repository.DriverRepository;
+import com.example.driverservice.repository.OutboxEventRepository;
 import com.example.driverservice.repository.ProcessedEventRepository;
 import com.example.driverservice.service.DriverService;
 import com.example.driverservice.service.DriverTripEventService;
@@ -13,8 +15,11 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Driver status changes driven by trip events (docs/events.md §4.3, §4.5, §4.8) against a real database
  * (H2 in PostgreSQL mode): the conditions live in the SQL WHERE clauses, so mocks cannot check them.
+ * The outbox relay is off in the test profile, so the DriverAssigned results stay in outbox_events to be read.
  */
 @SpringBootTest(properties = {
         // src/test/resources/application.yml excludes the DataSource for the mocked tests; this class needs it back
@@ -37,6 +43,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.jpa.hibernate.ddl-auto=create-drop"
 })
 class DriverTripEventIntegrationTest {
+
+    private static final String CORRELATION_ID = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
+    private static final UUID PASSENGER_ID = UUID.fromString("a0000000-0000-4000-8000-000000000001");
+
+    @Autowired
+    private OutboxEventRepository outboxEventRepository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Autowired
     private DriverTripEventService driverTripEventService;
@@ -73,11 +88,39 @@ class DriverTripEventIntegrationTest {
         return driver;
     }
 
+    /** DriverAssigned as trip-service sends it, for the given reservation version. */
+    private void assign(UUID eventId, UUID tripId, Driver driver, int reservationVersion) {
+        driverTripEventService.onDriverAssigned(eventId, CORRELATION_ID, tripId, driver.getDriverId(), PASSENGER_ID,
+                reservationVersion);
+    }
+
     /** A driver reserved for the trip and then assigned to it. */
     private Driver busyDriver(UUID tripId) {
         Driver driver = reservedDriver(tripId);
-        driverTripEventService.onDriverAssigned(UUID.randomUUID(), tripId, driver.getDriverId());
+        assign(UUID.randomUUID(), tripId, driver, reload(driver).getVersion());
         return driver;
+    }
+
+    /** The results queued in the outbox for this trip. */
+    private List<OutboxEvent> results(UUID tripId) {
+        return outboxEventRepository.findAll().stream()
+                .filter(event -> tripId.toString().equals(event.getAggregateId()))
+                .toList();
+    }
+
+    /** The only result queued for this trip, after checking its type and the command it answers. */
+    private JsonNode onlyResult(UUID tripId, String eventType, UUID driverAssignedEventId, int reservationVersion) {
+        List<OutboxEvent> results = results(tripId);
+        assertEquals(1, results.size(), "results queued for the trip");
+        assertEquals(eventType, results.get(0).getEventType());
+        JsonNode envelope = objectMapper.readTree(results.get(0).getPayload());
+        assertEquals(eventType, envelope.path("eventType").asText());
+        assertEquals(driverAssignedEventId.toString(), envelope.path("causationId").asText());
+        assertEquals(CORRELATION_ID, envelope.path("correlationId").asText());
+        assertEquals(driverAssignedEventId.toString(), envelope.path("payload").path("driverAssignedEventId").asText());
+        assertEquals(reservationVersion, envelope.path("payload").path("reservationVersion").intValue());
+        assertEquals(PASSENGER_ID.toString(), envelope.path("payload").path("passengerId").asText());
+        return envelope;
     }
 
     private static void assertReleased(Driver stored) {
@@ -87,14 +130,14 @@ class DriverTripEventIntegrationTest {
     }
 
     @Test
-    @DisplayName("DriverAssigned: RESERVED -> BUSY, lease cleared, trip kept, version + 1")
-    void onDriverAssigned_driverReservedForTrip_becomesBusy() {
+    @DisplayName("DriverAssigned for the live reservation: RESERVED -> BUSY, lease cleared, version + 1, one confirmation queued")
+    void onDriverAssigned_driverReservedForTrip_becomesBusyAndQueuesConfirmation() {
         UUID tripId = UUID.randomUUID();
         Driver driver = reservedDriver(tripId);
         int reservedVersion = reload(driver).getVersion();
         UUID eventId = UUID.randomUUID();
 
-        driverTripEventService.onDriverAssigned(eventId, tripId, driver.getDriverId());
+        assign(eventId, tripId, driver, reservedVersion);
 
         Driver stored = reload(driver);
         assertEquals(DriverStatus.BUSY, stored.getStatus());
@@ -103,20 +146,19 @@ class DriverTripEventIntegrationTest {
         assertEquals(reservedVersion + 1, stored.getVersion());
         assertEquals("DriverAssigned", processedEventRepository.findById(eventId).orElseThrow().getEventType());
         assertNotNull(processedEventRepository.findById(eventId).orElseThrow().getProcessedAt());
+        JsonNode envelope = onlyResult(tripId, "DriverAssignmentConfirmed", eventId, reservedVersion);
+        assertEquals(driver.getDriverId().toString(), envelope.path("payload").path("driverId").asText());
     }
 
     @Test
-    @DisplayName("An assigned driver is not returned to AVAILABLE when its reservation lease runs out")
+    @DisplayName("An assigned driver is not returned to AVAILABLE when the lease job runs after the lease time")
     void releaseExpiredReservations_driverAlreadyAssigned_staysBusy() {
-        Driver driver = savedDriver();
         UUID tripId = UUID.randomUUID();
-        Instant now = Instant.now();
-        // Reserved 31 seconds ago, so the 30 second lease ended a second ago
-        transactionTemplate.executeWithoutResult(status -> driverRepository.reserve(
-                driver.getDriverId(), tripId, driver.getVersion(), now.minusSeconds(1), now.minusSeconds(31)));
-        driverTripEventService.onDriverAssigned(UUID.randomUUID(), tripId, driver.getDriverId());
+        Driver driver = busyDriver(tripId);
 
-        driverService.releaseExpiredReservations();
+        // As if the lease job ran a minute later, after the 30 second lease would have ended
+        transactionTemplate.executeWithoutResult(status ->
+                driverRepository.releaseExpiredReservations(Instant.now().plusSeconds(60)));
 
         Driver stored = reload(driver);
         assertEquals(DriverStatus.BUSY, stored.getStatus());
@@ -124,14 +166,15 @@ class DriverTripEventIntegrationTest {
     }
 
     @Test
-    @DisplayName("DriverAssigned for a trip the driver is not reserved for changes nothing but is recorded")
-    void onDriverAssigned_driverReservedForAnotherTrip_leavesDriverUnchanged() {
+    @DisplayName("DriverAssigned for a trip the driver is not reserved for is rejected and changes nothing")
+    void onDriverAssigned_driverReservedForAnotherTrip_rejectsAndLeavesDriverUnchanged() {
         UUID reservedTrip = UUID.randomUUID();
         Driver driver = reservedDriver(reservedTrip);
         int reservedVersion = reload(driver).getVersion();
         UUID eventId = UUID.randomUUID();
+        UUID otherTrip = UUID.randomUUID();
 
-        driverTripEventService.onDriverAssigned(eventId, UUID.randomUUID(), driver.getDriverId());
+        assign(eventId, otherTrip, driver, reservedVersion);
 
         Driver stored = reload(driver);
         assertEquals(DriverStatus.RESERVED, stored.getStatus());
@@ -139,18 +182,102 @@ class DriverTripEventIntegrationTest {
         assertNotNull(stored.getReservedUntil());
         assertEquals(reservedVersion, stored.getVersion());
         assertTrue(processedEventRepository.existsById(eventId));
+        onlyResult(otherTrip, "DriverAssignmentRejected", eventId, reservedVersion);
+        assertTrue(results(reservedTrip).isEmpty());
     }
 
     @Test
-    @DisplayName("DriverAssigned after the lease expired finds an AVAILABLE driver and leaves it alone")
-    void onDriverAssigned_reservationAlreadyExpired_leavesDriverAvailable() {
+    @DisplayName("DriverAssigned with another reservation version is rejected and the reservation stays as it is")
+    void onDriverAssigned_wrongReservationVersion_rejectsAndLeavesDriverReserved() {
         UUID tripId = UUID.randomUUID();
         Driver driver = reservedDriver(tripId);
-        driverService.releaseReservation(driver.getDriverId(), tripId);
+        int reservedVersion = reload(driver).getVersion();
+        UUID eventId = UUID.randomUUID();
 
-        driverTripEventService.onDriverAssigned(UUID.randomUUID(), tripId, driver.getDriverId());
+        assign(eventId, tripId, driver, reservedVersion + 1);
+
+        Driver stored = reload(driver);
+        assertEquals(DriverStatus.RESERVED, stored.getStatus());
+        assertEquals(reservedVersion, stored.getVersion());
+        assertNotNull(stored.getReservedUntil());
+        onlyResult(tripId, "DriverAssignmentRejected", eventId, reservedVersion + 1);
+    }
+
+    @Test
+    @DisplayName("DriverAssigned after the lease ended, before the lease job released the driver, is rejected")
+    void onDriverAssigned_leaseEndedButNotYetReleased_rejectsAndLeavesDriverReserved() {
+        Driver driver = savedDriver();
+        UUID tripId = UUID.randomUUID();
+        Instant now = Instant.now();
+        // Reserved 31 seconds ago, so the 30 second lease ended a second ago; the lease job has not run yet
+        transactionTemplate.executeWithoutResult(status -> driverRepository.reserve(
+                driver.getDriverId(), tripId, driver.getVersion(), now.minusSeconds(1), now.minusSeconds(31)));
+        int reservedVersion = reload(driver).getVersion();
+        UUID eventId = UUID.randomUUID();
+
+        assign(eventId, tripId, driver, reservedVersion);
+
+        Driver stored = reload(driver);
+        assertEquals(DriverStatus.RESERVED, stored.getStatus());
+        assertEquals(reservedVersion, stored.getVersion());
+        onlyResult(tripId, "DriverAssignmentRejected", eventId, reservedVersion);
+    }
+
+    @Test
+    @DisplayName("DriverAssigned after the reservation was released finds an AVAILABLE driver, leaves it alone and is rejected")
+    void onDriverAssigned_reservationAlreadyReleased_rejectsAndLeavesDriverAvailable() {
+        UUID tripId = UUID.randomUUID();
+        Driver driver = reservedDriver(tripId);
+        int reservedVersion = reload(driver).getVersion();
+        driverService.releaseReservation(driver.getDriverId(), tripId);
+        UUID eventId = UUID.randomUUID();
+
+        assign(eventId, tripId, driver, reservedVersion);
 
         assertReleased(reload(driver));
+        onlyResult(tripId, "DriverAssignmentRejected", eventId, reservedVersion);
+    }
+
+    @Test
+    @DisplayName("A late DriverAssigned of an earlier attempt cannot take over the newer reservation of the same trip")
+    void onDriverAssigned_earlierAttemptOfSameTrip_doesNotTakeOverNewerReservation() {
+        UUID tripId = UUID.randomUUID();
+        Driver driver = reservedDriver(tripId);
+        int firstAttemptVersion = reload(driver).getVersion();
+        // The first reservation is released and the same driver is reserved for the same trip again
+        driverService.releaseReservation(driver.getDriverId(), tripId);
+        driverService.reserveDriver(driver.getDriverId(), tripId, reload(driver).getVersion());
+        int secondAttemptVersion = reload(driver).getVersion();
+        UUID lateEventId = UUID.randomUUID();
+        UUID currentEventId = UUID.randomUUID();
+
+        assign(lateEventId, tripId, driver, firstAttemptVersion);
+
+        assertEquals(DriverStatus.RESERVED, reload(driver).getStatus());
+        assertEquals(secondAttemptVersion, reload(driver).getVersion());
+
+        assign(currentEventId, tripId, driver, secondAttemptVersion);
+
+        assertEquals(DriverStatus.BUSY, reload(driver).getStatus());
+        List<String> resultTypes = results(tripId).stream().map(OutboxEvent::getEventType).sorted().toList();
+        assertEquals(List.of("DriverAssignmentConfirmed", "DriverAssignmentRejected"), resultTypes);
+    }
+
+    @Test
+    @DisplayName("The same DriverAssigned delivered twice changes the version once and queues one result")
+    void onDriverAssigned_sameEventDeliveredAgain_takesEffectOnce() {
+        UUID tripId = UUID.randomUUID();
+        Driver driver = reservedDriver(tripId);
+        int reservedVersion = reload(driver).getVersion();
+        UUID eventId = UUID.randomUUID();
+
+        assign(eventId, tripId, driver, reservedVersion);
+        assign(eventId, tripId, driver, reservedVersion);
+
+        Driver stored = reload(driver);
+        assertEquals(DriverStatus.BUSY, stored.getStatus());
+        assertEquals(reservedVersion + 1, stored.getVersion());
+        onlyResult(tripId, "DriverAssignmentConfirmed", eventId, reservedVersion);
     }
 
     @Test
@@ -278,7 +405,7 @@ class DriverTripEventIntegrationTest {
         int version = driver.getVersion();
 
         driverService.reserveDriver(driver.getDriverId(), tripId, version);
-        driverTripEventService.onDriverAssigned(UUID.randomUUID(), tripId, driver.getDriverId());
+        assign(UUID.randomUUID(), tripId, driver, version + 1);
         driverTripEventService.onTripCompleted(UUID.randomUUID(), tripId);
 
         Driver stored = reload(driver);
