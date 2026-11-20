@@ -20,7 +20,9 @@ import java.util.UUID;
  * Consumes DriverAssigned, TripCompleted and TripCancelled from trip-events and moves the driver between
  * RESERVED, BUSY and AVAILABLE (docs/events.md §4.3, §4.5, §4.8, §5). Other event types on the topic are
  * acknowledged and ignored. Failures are not caught here: the error handler in KafkaConsumerConfig retries
- * them and then moves the record to trip-events.DLQ.
+ * them and then moves the record to trip-events.DLQ. A DriverAssigned without a valid reservationVersion is
+ * malformed and goes to the DLQ without retry; one whose reservation no longer matches is not an error, it is
+ * answered with DriverAssignmentRejected.
  */
 @Slf4j
 @Component
@@ -57,7 +59,10 @@ public class TripEventConsumer {
 
             switch (eventType) {
                 case DriverTripEventService.DRIVER_ASSIGNED -> driverTripEventService.onDriverAssigned(
-                        eventId, tripId, requireUuid(payload, "driverId", eventType + " payload.driverId"));
+                        eventId, correlationId.isBlank() ? null : correlationId, tripId,
+                        requireUuid(payload, "driverId", eventType + " payload.driverId"),
+                        optionalUuid(payload, "passengerId", eventType + " payload.passengerId"),
+                        requireReservationVersion(payload, eventType + " payload.reservationVersion"));
                 case DriverTripEventService.TRIP_COMPLETED -> driverTripEventService.onTripCompleted(eventId, tripId);
                 // The driver is found through drivers.reserved_for_trip: trip-service sends no driverId here
                 default -> driverTripEventService.onTripCancelled(eventId, tripId);
@@ -89,5 +94,31 @@ public class TripEventConsumer {
         } catch (IllegalArgumentException e) {
             throw new InvalidEventException(description + " is not a UUID: " + value, e);
         }
+    }
+
+    // Only copied into the result for notification-service, so a missing or unreadable value is not an error
+    private static UUID optionalUuid(JsonNode node, String field, String description) {
+        String value = node.path(field).asText("");
+        if (value.isBlank()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            log.warn("{} is not a UUID and is left out of the result: {}", description, value);
+            return null;
+        }
+    }
+
+    // The driver version the reservation produced (docs/events.md §4.2): a whole number of at least 1
+    private static int requireReservationVersion(JsonNode node, String description) {
+        JsonNode value = node.path("reservationVersion");
+        if (value.isMissingNode() || value.isNull()) {
+            throw new InvalidEventException(description + " is missing");
+        }
+        if (!value.isIntegralNumber() || !value.canConvertToInt() || value.intValue() < 1) {
+            throw new InvalidEventException(description + " is not a whole number of at least 1: " + value);
+        }
+        return value.intValue();
     }
 }
