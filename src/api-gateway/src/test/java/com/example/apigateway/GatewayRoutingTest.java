@@ -56,9 +56,8 @@ class GatewayRoutingTest {
             "POST,   /api/trips,                   PASSENGER",
             "GET,    /api/trips/t1,                PASSENGER",
             "POST,   /api/trips/t1/accept,         DRIVER",
-            "POST,   /api/matching/r1/match,       PASSENGER",
+            "POST,   /api/matching/r1/match,       ADMIN",
             "POST,   /api/pricing/quote,           PASSENGER",
-            "POST,   /api/payments/t1/charge,      PASSENGER",
             "GET,    /api/payments/t1,             PASSENGER",
             "GET,    /api/notifications,           PASSENGER"
     })
@@ -74,6 +73,14 @@ class GatewayRoutingTest {
             "DELETE, /api/drivers/d1/reserve, PASSENGER",
             "POST,   /internal/drivers,       NONE",
             "DELETE, /internal/drivers,       NONE",
+            "POST,   /api/matching/r1/rematch, NONE",
+            "POST,   /api/matching/r1/rematch, ADMIN",
+            "POST,   /api/pricing/final,       NONE",
+            "POST,   /api/pricing/final,       DRIVER",
+            "POST,   /api/payments/t1/charge,  NONE",
+            "POST,   /api/payments/t1/charge,  PASSENGER",
+            "POST,   /api/payments/t1/refund,  NONE",
+            "POST,   /api/payments/t1/refund,  ADMIN",
             "GET,    /api/unknown,            PASSENGER"
     })
     void route_internalOrUnknownPath_returns404(String method, String path, String role) throws Exception {

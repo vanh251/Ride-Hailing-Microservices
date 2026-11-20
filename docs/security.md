@@ -67,7 +67,9 @@ The role rules are applied at the gateway (full table in [api.md](api.md) §10) 
 | Public | The two register endpoints, login, `GET /api/drivers/available`, `/actuator/**` |
 | `PASSENGER` | `/api/drivers/nearby`, `POST /api/trips`, `POST /api/trips/{id}/cancel` |
 | `DRIVER` | `PATCH /api/drivers/{id}/status` and `/location`, `POST /api/trips/{id}/accept`, `/start`, `/complete` |
+| `ADMIN` | `POST /api/matching/{requestId}/match`; the rule covers every `/api/matching/**` path and method |
 | Any valid token | Every other routed path |
+| Nobody (not routed, `404`) | `/internal/**`, `/api/drivers/{id}/reserve`, `POST /api/matching/{requestId}/rematch`, `POST /api/pricing/final`, `POST /api/payments/{tripId}/charge` and `/refund` |
 
 A valid token with the wrong role gets `403 ACCESS_DENIED`. `ADMIN` is not a wildcard: it gets `403` on
 the PASSENGER-only and DRIVER-only endpoints.
@@ -94,6 +96,12 @@ dropped, on public routes too, so behind the gateway the headers are either abse
 time, answers `401 INVALID_INTERNAL_API_KEY` when it is missing or wrong, and does not start when the key
 is blank. A JWT does not replace the key. The gateway has no route for `/internal/**` or `/reserve` and
 answers `404`, so these endpoints cannot be reached through port 8080 even by a caller who knows the key.
+
+The same holds for the "internal" endpoints of matching, pricing and payment: the gateway routes only
+`/api/matching/*/match`, `/api/pricing/quote` and `/api/payments/{tripId}`, so `rematch`, `POST /api/pricing/final`
+and `POST /api/payments/{tripId}/charge` and `/refund` answer `404` at port 8080 for every caller. trip-service
+calls `/api/pricing/final` directly. The manual trigger `POST /api/matching/{requestId}/match` stays routed for
+an `ADMIN` token, and matching-service still asks for `X-Internal-Api-Key` behind it.
 
 ## 5. Input handling
 
@@ -132,15 +140,16 @@ Run with `./gradlew test` in the service's directory.
 
 | Test class | Service | Covers | Tests |
 |---|---|---|---|
-| `GatewaySecurityTest` | api-gateway | Missing, invalid and expired token; token without role, with unknown role, with a non-UUID subject; `403` for each wrong role; public routes; `X-User-Id` and `X-User-Role` set from the token and forged values replaced | 42 |
-| `GatewaySecurityRegressionTest` | api-gateway | Attempts to get around the rules: `alg: none`, tampered role, cut-off signature; token in query string or cookie; `ADMIN` on role-restricted endpoints; `HEAD` on a GET-only rule; other methods and spellings of public paths; forged `X-User-Id` on public routes; path traversal and encoding tricks; internal paths with a valid token and the internal key; no session; error bodies that reveal nothing; actuator endpoints; CORS | 72 |
-| `GatewayRoutingTest` | api-gateway | Which paths are routed; internal and unknown paths answer `404` | 25 |
+| `GatewaySecurityTest` | api-gateway | Missing, invalid and expired token; token without role, with unknown role, with a non-UUID subject; `403` for each wrong role; public routes; `X-User-Id` and `X-User-Role` set from the token and forged values replaced | 45 |
+| `GatewaySecurityRegressionTest` | api-gateway | Attempts to get around the rules: `alg: none`, tampered role, cut-off signature; token in query string or cookie; `ADMIN` on role-restricted endpoints; the `ADMIN` rule on matching for other methods and spellings; `HEAD` on a GET-only rule; other methods and spellings of public paths; forged `X-User-Id` on public routes; path traversal and encoding tricks; internal paths and the internal endpoints of matching, pricing and payment with a valid token (also `ADMIN`) and the internal key; no session; error bodies that reveal nothing; actuator endpoints; CORS | 90 |
+| `GatewayRoutingTest` | api-gateway | Which paths are routed; internal and unknown paths answer `404` | 32 |
 | `AuthRegisterSecurityTest`, `AuthLoginSecurityTest`, `UserSecurityTest` | identity-service | Register and login are public; a `role` in the body is ignored; wrong password; missing, malformed, expired and wrongly signed token on `/api/users/{id}` | 19 |
 | `AuthControllerTest` | identity-service | Invalid and malformed register and login bodies, duplicate email, wrong credentials | 28 |
 | `DriverSecurityTest` | driver-service | Token and role rules; own-resource rule; internal API key required on `/reserve`, a JWT does not replace it | 22 |
 | `InternalApiKeyInterceptorTest` | driver-service | Missing, wrong and correct internal API key on `/internal/**` | 10 |
 
 Result on 2026-11-16: all of the above pass (api-gateway 139 tests, identity-service 97, driver-service 249).
+api-gateway re-run on 2026-11-20 after the internal endpoints were closed: 168 tests pass.
 Not run against the Docker stack.
 
 The regression tests found one defect, now fixed in api-gateway and driver-service: the PASSENGER rule
@@ -188,13 +197,12 @@ Accepted for this project; each would have to be closed before a real deployment
 |---|---|
 | `docker-compose.yml` publishes every service port (8081–8087), not only the gateway | A caller on the host can skip the gateway. trip, matching, pricing, payment and notification have no authentication of their own and accept any `X-User-Id` there |
 | `GET /api/drivers/available` is public | Anyone can list available drivers near a point: at most 50 per request, within 50 km, and with `page` every available driver in that circle, page by page. The endpoint remains public even though matching-service now has an internal key |
-| Routed "internal" endpoints (`/api/matching/**`, `POST /api/pricing/final`, `POST /api/payments/{tripId}/charge` and `/refund`) need only a valid token | Any logged-in user can call them |
 | Role rules are written per method and path; everything else needs only a valid token | A path or method that no rule names is forwarded for any role, and the backend answers `404` or `405` |
 | `GET /api/users/{id}` has no own-profile rule | Any logged-in user can read another user's name and email |
 | No refresh token, no logout, no revocation | A stolen token works until it expires (24 hours) |
 | No rate limit or lockout on login | Passwords can be guessed without being slowed down |
 | One shared `JWT_SECRET` (symmetric) and one shared `INTERNAL_API_KEY` | A service that holds the secret could also issue tokens; a leaked key opens every internal endpoint |
-| The gateway forwards a client's `X-Internal-Api-Key` header unchanged | Harmless today, because the endpoints that check the key are not routed |
+| The gateway forwards a client's `X-Internal-Api-Key` header unchanged | Of the endpoints that check the key, only `POST /api/matching/{requestId}/match` is routed, and it needs an `ADMIN` token at the gateway as well. The others are not routed |
 | `/actuator/health` (with details) and `/actuator/prometheus` are public at the gateway | Health details and metrics are readable without a token |
 | HTTP only; Kafka and the databases use no TLS and Kafka has no ACL | Traffic is readable and writable by anything inside the network |
 | Default secrets are committed | Safe only for a local demo (§6) |
