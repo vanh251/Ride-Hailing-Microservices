@@ -194,6 +194,34 @@ class GatewaySecurityRegressionTest {
         assertRejected(response, 403, "ACCESS_DENIED");
     }
 
+    @ParameterizedTest(name = "{0} {1} as {2}")
+    @CsvSource({
+            "HEAD,  /api/matching/r1/match,  PASSENGER",
+            "GET,   /api/matching/r1/match,  DRIVER",
+            "PUT,   /api/matching/r1/match,  PASSENGER",
+            "POST,  /api/matching/r1/match/, PASSENGER",
+            "POST,  /api/matching/r1,        DRIVER"
+    })
+    @DisplayName("The ADMIN rule on matching covers every method and spelling of the path, not only POST .../match")
+    void adminOnlyMatchingRoute_otherMethodOrSpellingWithNonAdminToken_returns403(String method, String path,
+            String role) throws Exception {
+        HttpResponse<String> response = send(method, path, TestTokens.token(USER_ID, role),
+                INTERNAL_API_KEY_HEADER, INTERNAL_API_KEY);
+
+        assertThat(response.statusCode()).isEqualTo(403);
+        assertThat(BACKEND_REQUESTS).isEmpty();
+    }
+
+    @Test
+    @DisplayName("An ADMIN token reaches the matching trigger, and the backend sees the verified ADMIN role")
+    void adminOnlyMatchingRoute_adminToken_isForwarded() throws Exception {
+        HttpResponse<String> response = send("POST", "/api/matching/r1/match", TestTokens.token(USER_ID, "ADMIN"));
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(onlyBackendRequest().uri()).isEqualTo("/api/matching/r1/match");
+        assertThat(onlyBackendRequest().header("X-User-Role")).containsExactly("ADMIN");
+    }
+
     @Test
     @DisplayName("HEAD, which a backend answers like GET, does not get around the role rule of a GET endpoint")
     void passengerOnlyGetRoute_headWithDriverToken_returns403() throws Exception {
@@ -313,6 +341,40 @@ class GatewaySecurityRegressionTest {
                 INTERNAL_API_KEY_HEADER, INTERNAL_API_KEY);
 
         assertThat(response.statusCode()).isEqualTo(404);
+        assertThat(BACKEND_REQUESTS).isEmpty();
+    }
+
+    @ParameterizedTest(name = "{0} {1}")
+    @CsvSource({
+            "POST, /api/matching/r1/rematch",
+            "POST, /api/matching/r1/rematch/",
+            "POST, /api/pricing/final",
+            "POST, /api/pricing/final/",
+            "POST, /api/payments/t1/charge",
+            "POST, /api/payments/t1/charge/",
+            "POST, /api/payments/t1/refund",
+            "GET,  /api/payments/t1/refund"
+    })
+    @DisplayName("Internal endpoints of routed services are not forwarded, even for ADMIN with the internal API key")
+    void internalEndpointOfRoutedService_withAdminTokenAndInternalApiKey_returns404AndIsNotForwarded(String method,
+            String path) throws Exception {
+        HttpResponse<String> response = send(method, path, TestTokens.token(USER_ID, "ADMIN"),
+                INTERNAL_API_KEY_HEADER, INTERNAL_API_KEY);
+
+        assertThat(response.statusCode()).isEqualTo(404);
+        assertThat(BACKEND_REQUESTS).isEmpty();
+    }
+
+    @ParameterizedTest(name = "{0} {1}")
+    @CsvSource({
+            "POST, /api/matching/r1/rematch",
+            "POST, /api/pricing/final",
+            "POST, /api/payments/t1/charge",
+            "POST, /api/payments/t1/refund"
+    })
+    @DisplayName("Without a token, internal endpoints of routed services answer 404 like the other internal paths")
+    void internalEndpointOfRoutedService_withoutToken_returns404(String method, String path) throws Exception {
+        assertThat(send(method, path, null).statusCode()).isEqualTo(404);
         assertThat(BACKEND_REQUESTS).isEmpty();
     }
 

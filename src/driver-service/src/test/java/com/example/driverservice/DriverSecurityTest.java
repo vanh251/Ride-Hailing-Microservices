@@ -4,6 +4,7 @@ import com.example.driverservice.config.InternalApiKeyInterceptor;
 import com.example.driverservice.entity.Driver;
 import com.example.driverservice.entity.DriverStatus;
 import com.example.driverservice.repository.DriverRepository;
+import com.example.driverservice.repository.OutboxEventRepository;
 import com.example.driverservice.repository.ProcessedEventRepository;
 import com.example.driverservice.repository.VehicleRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -60,6 +61,9 @@ class DriverSecurityTest {
 
     @MockitoBean
     private ProcessedEventRepository processedEventRepository;
+
+    @MockitoBean
+    private OutboxEventRepository outboxEventRepository;
 
     private static String statusBody(String status) {
         return "{\"status\": \"" + status + "\"}";

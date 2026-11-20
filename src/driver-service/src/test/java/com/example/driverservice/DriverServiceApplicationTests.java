@@ -1,6 +1,7 @@
 package com.example.driverservice;
 
 import com.example.driverservice.repository.DriverRepository;
+import com.example.driverservice.repository.OutboxEventRepository;
 import com.example.driverservice.repository.ProcessedEventRepository;
 import com.example.driverservice.repository.VehicleRepository;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,9 @@ class DriverServiceApplicationTests {
 
     @MockitoBean
     private ProcessedEventRepository processedEventRepository;
+
+    @MockitoBean
+    private OutboxEventRepository outboxEventRepository;
 
     @Test
     void contextLoads() {

@@ -18,6 +18,9 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -30,6 +33,8 @@ class TripEventConsumerTest {
     private static final UUID EVENT_ID = UUID.fromString("e0000000-0000-4000-8000-000000000003");
     private static final UUID TRIP_ID = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
     private static final UUID DRIVER_ID = UUID.fromString("d0000000-0000-4000-8000-000000000001");
+    private static final UUID PASSENGER_ID = UUID.fromString("a0000000-0000-4000-8000-000000000001");
+    private static final String CORRELATION_ID = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
 
     @Mock
     private DriverTripEventService driverTripEventService;
@@ -66,16 +71,67 @@ class TripEventConsumerTest {
                 """.formatted(eventId, eventType, TRIP_ID, payload);
     }
 
+    // The DriverAssigned payload trip-service sends (docs/events.md §4.3)
+    private static String driverAssignedPayload(String reservationVersion) {
+        return "{\"tripId\": \"%s\", \"driverId\": \"%s\", \"passengerId\": \"%s\", \"assignedAt\": \"2026-09-30T10:00:06Z\", %s \"unknownField\": 1}"
+                .formatted(TRIP_ID, DRIVER_ID, PASSENGER_ID, reservationVersion);
+    }
+
     @Test
-    @DisplayName("DriverAssigned marks the driver busy for the trip and acknowledges")
-    void consumeTripEvent_driverAssigned_marksDriverBusyAndAcks() {
-        String payload = "{\"tripId\": \"%s\", \"driverId\": \"%s\", \"unknownField\": 1}".formatted(TRIP_ID, DRIVER_ID);
+    @DisplayName("DriverAssigned hands the reservation, passenger and correlation id to the service and acknowledges")
+    void consumeTripEvent_driverAssigned_handsReservationToServiceAndAcks() {
+        consumer.consumeTripEvent(record(event("DriverAssigned", driverAssignedPayload("\"reservationVersion\": 6,"))),
+                acknowledgment);
+
+        verify(driverTripEventService).onDriverAssigned(EVENT_ID, CORRELATION_ID, TRIP_ID, DRIVER_ID, PASSENGER_ID, 6);
+        verifyNoMoreInteractions(driverTripEventService);
+        verify(acknowledgment).acknowledge();
+    }
+
+    @ParameterizedTest(name = "passengerId field: {0}")
+    @ValueSource(strings = {"", "\"passengerId\": \"\",", "\"passengerId\": null,", "\"passengerId\": \"passenger-1\","})
+    @DisplayName("passengerId is optional: when it is missing or unreadable the service gets null")
+    void consumeTripEvent_driverAssignedWithoutValidPassengerId_passesNull(String passengerIdField) {
+        String payload = "{\"tripId\": \"%s\", \"driverId\": \"%s\", %s \"reservationVersion\": 6}"
+                .formatted(TRIP_ID, DRIVER_ID, passengerIdField);
 
         consumer.consumeTripEvent(record(event("DriverAssigned", payload)), acknowledgment);
 
-        verify(driverTripEventService).onDriverAssigned(EVENT_ID, TRIP_ID, DRIVER_ID);
-        verifyNoMoreInteractions(driverTripEventService);
+        verify(driverTripEventService).onDriverAssigned(eq(EVENT_ID), eq(CORRELATION_ID), eq(TRIP_ID), eq(DRIVER_ID),
+                isNull(), eq(6));
         verify(acknowledgment).acknowledge();
+    }
+
+    @Test
+    @DisplayName("A DriverAssigned without correlationId is still handled; the service is given null")
+    void consumeTripEvent_driverAssignedWithoutCorrelationId_passesNull() {
+        String message = "{\"eventId\": \"%s\", \"eventType\": \"DriverAssigned\", \"payload\": %s}"
+                .formatted(EVENT_ID, "{\"tripId\": \"%s\", \"driverId\": \"%s\", \"reservationVersion\": 3}"
+                        .formatted(TRIP_ID, DRIVER_ID));
+
+        consumer.consumeTripEvent(record(message), acknowledgment);
+
+        verify(driverTripEventService).onDriverAssigned(eq(EVENT_ID), isNull(), eq(TRIP_ID), eq(DRIVER_ID), isNull(), eq(3));
+        verify(acknowledgment).acknowledge();
+    }
+
+    @ParameterizedTest(name = "reservationVersion field: {0}")
+    @ValueSource(strings = {
+            "",
+            "\"reservationVersion\": null,",
+            "\"reservationVersion\": 0,",
+            "\"reservationVersion\": -1,",
+            "\"reservationVersion\": 1.5,",
+            "\"reservationVersion\": \"6\",",
+            "\"reservationVersion\": 3000000000,"
+    })
+    @DisplayName("DriverAssigned needs a reservationVersion that is a whole number of at least 1, else it goes to the DLQ")
+    void consumeTripEvent_driverAssignedWithoutValidReservationVersion_throwsInvalidEventException(String versionField) {
+        assertThrows(InvalidEventException.class, () -> consumer.consumeTripEvent(
+                record(event("DriverAssigned", driverAssignedPayload(versionField))), acknowledgment));
+
+        verifyNoInteractions(driverTripEventService);
+        verify(acknowledgment, never()).acknowledge();
     }
 
     @Test
@@ -194,9 +250,9 @@ class TripEventConsumerTest {
     @Test
     @DisplayName("A processing failure propagates without acknowledging, so the error handler can retry it")
     void consumeTripEvent_processingFailure_propagatesWithoutAck() {
-        String payload = "{\"tripId\": \"%s\", \"driverId\": \"%s\"}".formatted(TRIP_ID, DRIVER_ID);
+        String payload = driverAssignedPayload("\"reservationVersion\": 6,");
         doThrow(new IllegalStateException("database down"))
-                .when(driverTripEventService).onDriverAssigned(any(), any(), any());
+                .when(driverTripEventService).onDriverAssigned(any(), any(), any(), any(), any(), anyInt());
 
         assertThrows(IllegalStateException.class,
                 () -> consumer.consumeTripEvent(record(event("DriverAssigned", payload)), acknowledgment));

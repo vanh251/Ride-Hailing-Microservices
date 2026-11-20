@@ -186,7 +186,9 @@ class GatewaySecurityTest {
             "PASSENGER, POST,  /api/trips/t1/start",
             "PASSENGER, POST,  /api/trips/t1/complete",
             "PASSENGER, PATCH, /api/drivers/d1/status",
-            "PASSENGER, PATCH, /api/drivers/d1/location"
+            "PASSENGER, PATCH, /api/drivers/d1/location",
+            "PASSENGER, POST,  /api/matching/r1/match",
+            "DRIVER,    POST,  /api/matching/r1/match"
     })
     @DisplayName("A role that the endpoint does not allow returns 403 ACCESS_DENIED")
     void roleRestrictedRoute_wrongRole_returns403AccessDenied(String role, String method, String path) throws Exception {
@@ -213,6 +215,7 @@ class GatewaySecurityTest {
             "PASSENGER, GET,   /api/drivers/d1",
             "PASSENGER, GET,   /api/payments/t1",
             "PASSENGER, POST,  /api/pricing/quote",
+            "ADMIN,     POST,  /api/matching/r1/match",
             "DRIVER,    GET,   /api/notifications/trip/t1"
     })
     @DisplayName("An allowed role passes the security layer")

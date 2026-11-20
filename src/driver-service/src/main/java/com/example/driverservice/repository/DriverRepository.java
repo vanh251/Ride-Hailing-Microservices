@@ -62,16 +62,20 @@ public interface DriverRepository extends JpaRepository<Driver, UUID> {
     int releaseExpiredReservations(@Param("now") Instant now);
 
     /**
-     * RESERVED -> BUSY when the trip the driver is reserved for is assigned to it (event DriverAssigned). The lease
-     * no longer applies, so reservedUntil is cleared; reservedForTrip stays, it says which trip the driver is on.
-     * Returns 0 when the driver is not RESERVED for this trip.
+     * RESERVED -> BUSY when the trip the driver is reserved for is assigned to it (event DriverAssigned,
+     * docs/events.md §4.3). One statement that only matches the exact reservation: this trip, the version the
+     * reservation produced (reservationVersion) and a lease that is still running, so a late DriverAssigned of an
+     * earlier attempt cannot take over a newer reservation. The lease no longer applies, so reservedUntil is
+     * cleared; reservedForTrip stays, it says which trip the driver is on. Returns 1 when the driver became BUSY,
+     * 0 when the reservation does not match.
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE Driver d SET d.status = com.example.driverservice.entity.DriverStatus.BUSY, "
             + "d.reservedUntil = null, d.version = d.version + 1, d.updatedAt = :now "
             + "WHERE d.driverId = :driverId AND d.status = com.example.driverservice.entity.DriverStatus.RESERVED "
-            + "AND d.reservedForTrip = :tripId")
-    int markBusy(@Param("driverId") UUID driverId, @Param("tripId") UUID tripId, @Param("now") Instant now);
+            + "AND d.reservedForTrip = :tripId AND d.version = :reservationVersion AND d.reservedUntil > :now")
+    int markBusy(@Param("driverId") UUID driverId, @Param("tripId") UUID tripId,
+                 @Param("reservationVersion") int reservationVersion, @Param("now") Instant now);
 
     /**
      * Back to AVAILABLE for the driver held by this trip, if it is in one of the given statuses (events
