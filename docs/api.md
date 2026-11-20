@@ -42,7 +42,7 @@ How the whole system is protected, what is tested and the known limitations are 
 
 ### Verification at the API Gateway
 
-The gateway verifies the token (signature, expiry, `sub` is a UUID, `role` is a known role) before it routes a request, and checks the role for the endpoints marked PASSENGER or DRIVER below (the full list is in §10). "Own resource" checks stay in the backend service. identity-service and driver-service verify the token again themselves; trip, matching, pricing, payment and notification rely on the gateway.
+The gateway verifies the token (signature, expiry, `sub` is a UUID, `role` is a known role) before it routes a request, and checks the role for the endpoints marked PASSENGER, DRIVER or admin below (the full list is in §10). "Own resource" checks stay in the backend service. identity-service and driver-service verify the token again themselves; trip, matching, pricing, payment and notification rely on the gateway.
 
 | Case | Response |
 |---|---|
@@ -55,7 +55,7 @@ The `401` and `403` answers use the standard error body of §8 with the `code` a
 
 Routes that need no token at the gateway: `POST /api/auth/register/passenger`, `POST /api/auth/register/driver`, `POST /api/auth/login`, `GET /api/drivers/available` and `/actuator/**`. They are public only for that method and exact path: `GET /api/auth/login` or `POST /api/auth/refresh`, for example, need a token. An invalid token on a public route is ignored, the request goes through as anonymous.
 
-Endpoints marked "internal" that the gateway still routes (`/api/matching/**`, `POST /api/pricing/final`, `POST /api/payments/{tripId}/charge`, `POST /api/payments/{tripId}/refund`) need a valid token of any role at the gateway; no role rule is applied to them yet.
+Endpoints marked "internal" are called service to service over Docker DNS, never through the gateway. The gateway does not route `POST /api/matching/{requestId}/rematch`, `POST /api/pricing/final`, `POST /api/payments/{tripId}/charge` or `POST /api/payments/{tripId}/refund` and answers `404` for them, with or without a token. `POST /api/matching/{requestId}/match` ("internal or admin") is routed for an `ADMIN` token only; any other role gets `403 ACCESS_DENIED` on every `/api/matching/**` path.
 
 **`X-User-Id`:** for an authenticated request the gateway forwards the header `X-User-Id` = the token's `sub` (the user id) to the backend, together with the original `Authorization` header. An `X-User-Id` sent by the client is always dropped, on public routes too, so a backend behind the gateway can trust the header: it is either absent (anonymous request) or the verified user id.
 
@@ -67,7 +67,7 @@ Endpoints marked "internal" that the gateway still routes (`/api/matching/**`, `
 |---|---|
 | `PASSENGER` | Search nearby drivers, create ride, cancel own ride, view own trip |
 | `DRIVER` | Update own status, update own location, accept/start/complete trip |
-| `ADMIN` | No endpoint is reserved for `ADMIN` and it cannot be self-registered. An `ADMIN` token passes the "any role" endpoints and gets `403` on the PASSENGER-only and DRIVER-only ones |
+| `ADMIN` | Trigger matching manually (`POST /api/matching/{requestId}/match`). `ADMIN` cannot be self-registered. An `ADMIN` token passes the "any role" endpoints and gets `403` on the PASSENGER-only and DRIVER-only ones |
 
 ---
 
@@ -795,7 +795,7 @@ Side effects:
 ## 5. Matching Service
 
 **Internal address:** `http://matching-service:8084`  
-**Gateway prefix:** `/api/matching/**`
+**Gateway route:** `/api/matching/*/match` only, `ADMIN` token (rematch is not routed, see §10)
 
 > Note: Matching is primarily driven by Kafka events. REST endpoints exist for manual trigger and testing.
 
@@ -805,7 +805,7 @@ Side effects:
 
 Manually trigger matching for a ride request.
 
-**Auth required:** Yes (internal or admin)
+**Auth required:** Yes (internal or admin). Through the gateway only an `ADMIN` token is accepted, other roles get `403 ACCESS_DENIED`; internal callers call matching-service directly. matching-service itself also requires `X-Internal-Api-Key`.
 
 **Response 202 Accepted:**
 ```json
@@ -822,7 +822,7 @@ Manually trigger matching for a ride request.
 
 Trigger rematch when initial driver rejected.
 
-**Auth required:** Yes (internal)
+**Auth required:** Yes (internal). Not routed by the gateway (`404`).
 
 **Response 202 Accepted:**
 ```json
@@ -838,7 +838,7 @@ Trigger rematch when initial driver rejected.
 ## 6. Pricing Service
 
 **Internal address:** `http://pricing-service:8085`  
-**Gateway prefix:** `/api/pricing/**`
+**Gateway route:** `/api/pricing/quote` only (`/final` is not routed, see §10)
 
 > Note: Pricing Service is stateless. No database. Called synchronously by Trip Service only: `/quote` when a trip is created, `/final` when it is completed. Payment Service never calls Pricing; it charges the `finalFare` carried by `TripCompleted`.
 >
@@ -890,7 +890,7 @@ total = baseFare + (distanceKm * distanceRate) + (durationMin * timeRate)
 
 Calculate final fare after trip completion (actual distance/duration).
 
-**Auth required:** Yes (internal)
+**Auth required:** Yes (internal). Not routed by the gateway (`404`): Trip Service calls `http://pricing-service:8085` directly.
 
 **Request Body:**
 ```json
@@ -918,7 +918,7 @@ Calculate final fare after trip completion (actual distance/duration).
 ## 7. Payment Service
 
 **Internal address:** `http://payment-service:8086`  
-**Gateway prefix:** `/api/payments/**`
+**Gateway route:** `/api/payments/*` only, i.e. `GET /api/payments/{tripId}` (`/charge` and `/refund` are not routed, see §10)
 
 > Note: In the business flow a payment is triggered **only** by the Kafka event `TripCompleted` (docs/events.md §4.5); Trip Service never calls `/charge`. The REST charge exists for manual tests and the status/refund endpoints for checks and compensation.
 >
@@ -930,7 +930,7 @@ Calculate final fare after trip completion (actual distance/duration).
 
 Charge a passenger for a trip (manual test path).
 
-**Auth required:** Yes (internal)
+**Auth required:** Yes (internal). Not routed by the gateway (`404`): manual tests call `http://localhost:8086` directly.
 
 **Path Parameters:** `tripId` – UUID
 
@@ -982,7 +982,7 @@ Charge a passenger for a trip (manual test path).
 
 Refund the successful payment of a trip (compensating action for cancellation after charge). Writes a negative `REFUND` ledger entry. Refunding an already refunded payment returns it unchanged.
 
-**Auth required:** Yes (internal)
+**Auth required:** Yes (internal). Not routed by the gateway (`404`).
 
 **Response 200 OK:**
 ```json
@@ -1125,15 +1125,16 @@ All client requests enter via `http://localhost:8080`.
 | `/api/users/**` | identity-service | `http://identity-service:8081/api/users/**` |
 | `/api/drivers/*`, `/api/drivers/*/status`, `/api/drivers/*/location` | driver-service | `http://driver-service:8082/api/drivers/...` |
 | `/api/trips/**` | trip-service | `http://trip-service:8083/api/trips/**` |
-| `/api/matching/**` | matching-service | `http://matching-service:8084/api/matching/**` |
-| `/api/pricing/**` | pricing-service | `http://pricing-service:8085/api/pricing/**` |
-| `/api/payments/**` | payment-service | `http://payment-service:8086/api/payments/**` |
+| `/api/matching/*/match` | matching-service | `http://matching-service:8084/api/matching/{requestId}/match` |
+| `/api/pricing/quote` | pricing-service | `http://pricing-service:8085/api/pricing/quote` |
+| `/api/payments/*` | payment-service | `http://payment-service:8086/api/payments/{tripId}` |
 | `/api/notifications/**` | notification-service | `http://notification-service:8087/api/notifications/**` |
 | `/actuator/health`, `/actuator/info`, `/actuator/prometheus` | api-gateway | (local) |
 
 > No `lb://` scheme is used. Service discovery is via Docker DNS only.
 > `/internal/**` (service-to-service APIs) is intentionally **not** routed by the gateway.
 > `POST`/`DELETE /api/drivers/{id}/reserve` is **not** routed either (gateway returns `404`). Matching calls both directly at `http://driver-service:8082`; Trip also calls DELETE for cancellation compensation. Both clients use the same internal key.
+> The other internal endpoints are **not** routed either (`404`): `POST /api/matching/{requestId}/rematch`, `POST /api/pricing/final` (Trip calls `http://pricing-service:8085` directly), `POST /api/payments/{tripId}/charge` and `POST /api/payments/{tripId}/refund`.
 > The gateway verifies the JWT before routing (§1): any other path without a valid token gets `401`, including paths that have no route.
 > Swagger UI and `/v3/api-docs` of the services are not routed: open them on the service's own port (e.g. `http://localhost:8081/swagger-ui.html`).
 
@@ -1146,8 +1147,9 @@ Checked in this order; the first matching line applies.
 | any | `/actuator/**` | Public (only `health`, `info`, `prometheus` exist) |
 | POST | `/api/auth/register/passenger`, `/api/auth/register/driver`, `/api/auth/login` | Public |
 | GET | `/api/drivers/available` | Public (see §3) |
-| any | `/internal/**`, `/api/drivers/*/reserve` | Not routed: `404` |
+| any | `/internal/**`, `/api/drivers/*/reserve`, `/api/matching/*/rematch`, `/api/pricing/final`, `/api/payments/*/charge`, `/api/payments/*/refund` | Not routed: `404` |
 | any | `/api/drivers/nearby` | `PASSENGER` |
+| any | `/api/matching/**` | `ADMIN` (only `/api/matching/*/match` is routed) |
 | PATCH | `/api/drivers/*/status`, `/api/drivers/*/location` | `DRIVER` |
 | POST | `/api/trips`, `/api/trips/*/cancel` | `PASSENGER` |
 | POST | `/api/trips/*/accept`, `/api/trips/*/start`, `/api/trips/*/complete` | `DRIVER` |
