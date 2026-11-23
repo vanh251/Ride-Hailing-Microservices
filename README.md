@@ -167,6 +167,6 @@ docker compose up -d --build
 
 ## 5. Web Demo
 
-After starting the upgraded stack, open `http://localhost:8080/demo/index.html` for Passenger A/B, Driver, concurrent booking, and a nine-scenario runbook. The UI is served by the Gateway and calls the real APIs. Service stop/start stays in Docker Desktop or the copied Compose commands.
+After starting the upgraded stack, open `http://localhost:8080/demo/login.html` for the passenger and driver apps (map, booking, popups), and `http://localhost:8080/demo/index.html` for the two-passengers-one-driver concurrency test. The pages are served by the Gateway and call the real APIs. Service stop/start stays in Docker Desktop or Compose commands.
 
 See [the demo guide](docs/demo-web.md) for setup, fault recovery, session handling, and tests. Existing W3 databases require the cutover/migrations described in `docs/operations.md` before running the W5 application.

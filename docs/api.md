@@ -842,7 +842,7 @@ Trigger rematch when initial driver rejected.
 
 > Note: Pricing Service is stateless. No database. Called synchronously by Trip Service only: `/quote` when a trip is created, `/final` when it is completed. Payment Service never calls Pricing; it charges the `finalFare` carried by `TripCompleted`.
 >
-> Distance and duration of a quote are always estimated by Pricing Service from the coordinates (route distance = straight line × 1.25, 20 km/h city speed). The request has no field to override them.
+> Distance and duration of a quote are always estimated by Pricing Service from the coordinates. Distance is the driving distance along the streets from an OSRM routing server (`PRICING_ROUTING_URL`, default the public `https://router.project-osrm.org`, demo use only); if that server does not answer within 3 s, Pricing falls back to straight line × 1.25. Duration assumes 20 km/h city traffic. The request has no field to override them. The response adds `routePoints` (the road as `[latitude, longitude]` points, `null` on the fallback) for drawing the route on a map.
 
 ---
 

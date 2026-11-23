@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Đi · Đặt xe</title>
+  <meta name="description" content="Chọn điểm đón, điểm đến trên bản đồ, đặt xe và theo dõi chuyến đi.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="./ride.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+</head>
+<body class="app">
+  <svg class="svg-defs" aria-hidden="true"><defs>
+    <symbol id="i-car" viewBox="0 0 24 24"><path d="m5 11 2-5.5h10L19 11M4 11h16v7H4zM7 18v2m10-2v2M7.5 14.5h1m7 0h1"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></symbol>
+    <symbol id="i-tap" viewBox="0 0 24 24"><path d="M12 21s-7-6-7-11a7 7 0 1 1 14 0c0 5-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+  </defs></svg>
+  <header class="topbar">
+    <a class="brand" href="rider.html"><span class="brand-mark">đi</span>Đi</a>
+    <div class="topbar-right">
+      <div id="account"></div>
+      <button id="logout" class="btn ghost small"><svg class="icon"><use href="#i-logout"/></svg>Đăng xuất</button>
+    </div>
+  </header>
+  <main class="stage">
+    <div id="map" class="map" role="application" aria-label="Bản đồ chọn điểm đón và điểm đến"></div>
+
+    <section id="plan" class="sheet" aria-labelledby="plan-title">
+      <h1 id="plan-title">Bạn muốn đi đâu?</h1>
+      <div class="route">
+        <div class="route-field active" data-pick="pickup"><span class="dot pickup"></span><label>Điểm đón<input id="pickup-address" placeholder="Chạm bản đồ để chọn" maxlength="180"></label></div>
+        <div class="route-field" data-pick="destination"><span class="dot destination"></span><label>Điểm đến<input id="destination-address" placeholder="Chạm bản đồ để chọn" maxlength="180"></label></div>
+      </div>
+      <p class="hint"><svg class="icon"><use href="#i-tap"/></svg><span id="pick-hint">Chạm vào bản đồ để đặt điểm đón.</span></p>
+      <div class="sheet-section">
+        <h2>Địa điểm gợi ý</h2>
+        <div class="chips" id="places"></div>
+      </div>
+      <div class="vehicle"><svg class="icon"><use href="#i-car"/></svg><div><strong>Đi Car</strong><small id="nearby-count">Đang tìm xe quanh đây…</small></div></div>
+      <div class="fare">
+        <div><small>Giá ước tính</small><strong id="fare">—</strong></div>
+        <div class="meta" id="fare-meta">Chọn đủ hai điểm<br>để xem giá</div>
+      </div>
+      <button id="book" class="btn primary block" disabled>Đặt xe</button>
+    </section>
+
+    <section id="track" class="sheet" aria-labelledby="status-title" hidden>
+      <span id="status-pill" class="status-pill"></span>
+      <div class="sheet-section">
+        <h1 id="status-title"></h1>
+        <p id="status-sub" class="muted"></p>
+      </div>
+      <ol id="timeline" class="timeline"></ol>
+      <dl id="facts" class="facts"></dl>
+      <div class="actions">
+        <button id="cancel" class="btn danger">Hủy chuyến</button>
+        <button id="new-trip" class="btn primary">Đặt chuyến mới</button>
+      </div>
+      <hr class="divider">
+      <div class="sheet-section">
+        <h2>Thông báo của chuyến</h2>
+        <ul id="inbox" class="inbox"></ul>
+      </div>
+    </section>
+  </main>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script type="module">
+    import {$, esc, api, requireRole, renderAccount, toast, failure, makeMap, pinIcon, placeLabel} from './ride.mjs';
+    import {STAGES, TERMINAL, statusText, stageIndex, unseen, canCancel, money, noteText} from './ride-core.mjs';
+    import {parseRoute, bookingUncertain} from './client.mjs';
+
+    const session = requireRole('PASSENGER');
+    if (session) main();
+
+    function main() {
+      renderAccount(session, 'Hành khách');
+      const map = makeMap($('map'));
+      const PLACES = [
+        ['Hồ Hoàn Kiếm', 21.0287, 105.8524], ['Nhà hát Lớn', 21.0242, 105.8576], ['Văn Miếu', 21.0293, 105.8355],
+        ['Lăng Bác', 21.0368, 105.8346], ['Ga Hà Nội', 21.0245, 105.8412], ['Phủ Tây Hồ', 21.0598, 105.8195],
+      ];
+      const SUBTITLE = {
+        SEARCHING: 'Hệ thống đang tìm tài xế gần bạn nhất.',
+        ASSIGNING: 'Đã tìm thấy tài xế, đang chờ tài xế xác nhận.',
+        ASSIGNED: 'Tài xế đã nhận chuyến và đang đến điểm đón.',
+        IN_PROGRESS: 'Bạn đang trên đường đến điểm đến.',
+        COMPLETED: 'Chuyến đã kết thúc. Hệ thống đang thanh toán.',
+        PAID: 'Thanh toán thành công. Cảm ơn bạn đã đi cùng Đi.',
+        CANCELLED: 'Chuyến đã được hủy.',
+        PAYMENT_FAILED: 'Thanh toán không thành công. Vui lòng liên hệ hỗ trợ.',
+      };
+      const PILL = {SEARCHING: 'warn live', ASSIGNING: 'warn live', ASSIGNED: 'ok live', IN_PROGRESS: 'ok live', COMPLETED: 'warn live', PAID: 'ok', CANCELLED: 'bad', PAYMENT_FAILED: 'bad'};
+      // Every other status change already arrives as a notification popup; ASSIGNING has none
+      const STATUS_TOAST = {ASSIGNING: 'info'};
+      const NOTE_KIND = {DriverAssignmentConfirmed: 'success', PaymentSucceeded: 'success', PaymentFailed: 'error', TripCancelled: 'warn'};
+
+      const tripKey = `di-trip-${session.userId}`;
+      let tripId = null;
+      try { tripId = localStorage.getItem(tripKey); } catch { /* storage blocked */ }
+      let trip = null, picking = 'pickup', quoteFor = '', busy = false, roadTrip = null;
+      const route = {pickup: null, destination: null};
+      const markers = {pickup: null, destination: null};
+      let line = null;
+      const driversLayer = L.layerGroup().addTo(map);
+      const seen = new Set();
+      let primed = false;
+
+      // --- Planning ---
+      function setPicking(kind) {
+        picking = kind;
+        for (const field of document.querySelectorAll('[data-pick]')) field.classList.toggle('active', field.dataset.pick === kind);
+        $('pick-hint').textContent = `Chạm vào bản đồ để đặt ${kind === 'pickup' ? 'điểm đón' : 'điểm đến'}.`;
+      }
+      for (const field of document.querySelectorAll('[data-pick]')) field.onclick = () => setPicking(field.dataset.pick);
+
+      function setPoint(kind, latlng, address) {
+        route[kind] = {latitude: latlng.lat, longitude: latlng.lng};
+        $(`${kind}-address`).value = address;
+        if (!markers[kind]) {
+          markers[kind] = L.marker(latlng, {icon: pinIcon(kind), draggable: true, keyboard: false}).addTo(map);
+          markers[kind].on('dragend', () => setPoint(kind, markers[kind].getLatLng(), placeLabel(markers[kind].getLatLng())));
+        } else markers[kind].setLatLng(latlng);
+        drawLine();
+        if (kind === 'pickup' && !route.destination) setPicking('destination');
+        quote();
+      }
+
+      // The road from Pricing's quote; a dotted straight line until it arrives or when routing is unavailable
+      function drawLine(roadPoints = null) {
+        if (line) line.remove();
+        line = null;
+        if (route.pickup && route.destination) {
+          line = roadPoints
+            ? L.polyline(roadPoints, {color: '#0a8f4f', weight: 6, opacity: .9, lineCap: 'round', lineJoin: 'round'}).addTo(map)
+            : L.polyline([[route.pickup.latitude, route.pickup.longitude], [route.destination.latitude, route.destination.longitude]],
+              {color: '#0a8f4f', weight: 5, opacity: .85, dashArray: '2 10', lineCap: 'round'}).addTo(map);
+          map.fitBounds(line.getBounds(), {paddingTopLeft: [innerWidth > 760 ? 440 : 40, 60], paddingBottomRight: [60, innerWidth > 760 ? 60 : innerHeight * .6]});
+        }
+      }
+
+      map.on('click', event => { if (!tripId) setPoint(picking, event.latlng, placeLabel(event.latlng)); });
+
+      $('places').innerHTML = PLACES.map(([name], i) => `<button class="chip" data-place="${i}">${esc(name)}</button>`).join('');
+      for (const chip of document.querySelectorAll('[data-place]')) chip.onclick = () => {
+        const [name, lat, lng] = PLACES[chip.dataset.place];
+        setPoint(picking, L.latLng(lat, lng), name);
+        map.panTo([lat, lng]);
+      };
+
+      function payload() {
+        return parseRoute(Object.fromEntries(['pickup', 'destination'].map(kind => [kind, {...route[kind], address: $(`${kind}-address`).value}])));
+      }
+
+      async function quote() {
+        $('book').disabled = true;
+        if (!route.pickup || !route.destination) return;
+        const key = JSON.stringify(route);
+        quoteFor = key;
+        $('fare').textContent = '…';
+        try {
+          const result = await api('/api/pricing/quote', {method: 'POST', body: payload()}, session);
+          if (quoteFor !== key) return;
+          drawLine(result.routePoints);
+          $('fare').textContent = money(result.totalFare);
+          $('fare-meta').innerHTML = `${esc(result.estimatedDistanceKm)} km<br>khoảng ${esc(result.estimatedDurationMin)} phút`;
+          $('book').disabled = busy;
+        } catch (error) { $('fare').textContent = '—'; failure(error); }
+      }
+
+      $('book').onclick = async () => {
+        busy = true; $('book').disabled = true;
+        try {
+          const created = await api('/api/trips', {method: 'POST', body: payload()}, session);
+          primed = true; seen.clear();
+          follow(created);
+          toast('Đã đặt xe', 'Đang tìm tài xế gần bạn.', 'success');
+        } catch (error) {
+          if (bookingUncertain(error)) toast('Chưa rõ kết quả đặt xe', `Đừng đặt lại ngay. Mã yêu cầu: ${error.correlationId}`, 'warn');
+          else failure(error);
+          $('book').disabled = false;
+        } finally { busy = false; }
+      };
+
+      // --- Tracking ---
+      function follow(next) {
+        const changed = trip && trip.status !== next.status;
+        trip = next; tripId = next.tripId;
+        try { localStorage.setItem(tripKey, tripId); } catch { /* storage blocked */ }
+        if (changed && STATUS_TOAST[next.status]) toast(statusText(next.status), SUBTITLE[next.status], STATUS_TOAST[next.status]);
+        renderTrip();
+      }
+
+      function renderTrip() {
+        $('plan').hidden = Boolean(trip);
+        $('track').hidden = !trip;
+        driversLayer.clearLayers();
+        if (!trip) return;
+        for (const kind of ['pickup', 'destination']) {
+          const point = trip[kind];
+          if (point && !route[kind]) setPointQuiet(kind, point);
+        }
+        if (roadTrip !== trip.tripId && trip.pickup && trip.destination) {
+          roadTrip = trip.tripId;
+          api('/api/pricing/quote', {method: 'POST', body: {pickup: trip.pickup, destination: trip.destination}}, session)
+            .then(result => drawLine(result.routePoints)).catch(() => {});
+        }
+        $('status-pill').className = `status-pill ${PILL[trip.status] || ''}`;
+        $('status-pill').textContent = TERMINAL.has(trip.status) ? 'Đã kết thúc' : 'Đang diễn ra';
+        $('status-title').textContent = statusText(trip.status);
+        $('status-sub').textContent = SUBTITLE[trip.status] || '';
+        const index = stageIndex(trip.status);
+        $('timeline').hidden = index < 0;
+        $('timeline').innerHTML = STAGES.map(([, label], i) => `<li class="${i < index || trip.status === 'PAID' ? 'done' : i === index ? 'current' : ''}">${esc(label)}</li>`).join('');
+        $('facts').innerHTML = `
+          <div class="wide"><dt>Điểm đón</dt><dd>${esc(trip.pickup?.address)}</dd></div>
+          <div class="wide"><dt>Điểm đến</dt><dd>${esc(trip.destination?.address)}</dd></div>
+          <div><dt>${trip.finalFare != null ? 'Giá cuối cùng' : 'Giá ước tính'}</dt><dd>${money(trip.finalFare ?? trip.estimatedFare)}</dd></div>
+          <div><dt>Tài xế</dt><dd>${trip.driverId ? `Mã ${esc(trip.driverId.slice(0, 8))}` : 'Chưa có'}</dd></div>`;
+        $('cancel').hidden = !canCancel(trip);
+        $('new-trip').hidden = !TERMINAL.has(trip.status);
+      }
+
+      function setPointQuiet(kind, point) {
+        route[kind] = {latitude: point.latitude, longitude: point.longitude};
+        $(`${kind}-address`).value = point.address || '';
+        const latlng = [point.latitude, point.longitude];
+        if (!markers[kind]) markers[kind] = L.marker(latlng, {icon: pinIcon(kind), keyboard: false}).addTo(map);
+        else markers[kind].setLatLng(latlng);
+        drawLine();
+      }
+
+      function renderInbox(list) {
+        const mine = list.filter(n => n.recipientType === 'PASSENGER');
+        $('inbox').innerHTML = mine.length ? mine.map(n => `<li><svg class="icon"><use href="#i-bell"/></svg><div><strong>${esc(noteText(n)[0])}</strong>${esc(noteText(n)[1])}</div><time>${new Date(n.timestamp).toLocaleTimeString('vi-VN', {hour: '2-digit', minute: '2-digit'})}</time></li>`).join('') : '<li class="empty">Chưa có thông báo.</li>';
+        for (const note of unseen(mine, seen)) {
+          seen.add(note.id);
+          if (primed) toast(...noteText(note), NOTE_KIND[note.eventType] || 'info');
+        }
+        primed = true;
+      }
+
+      $('cancel').onclick = async () => {
+        if (!confirm('Bạn chắc chắn muốn hủy chuyến này?')) return;
+        $('cancel').disabled = true;
+        try { follow(await api(`/api/trips/${tripId}/cancel`, {method: 'POST', body: {reason: 'Hành khách hủy trên ứng dụng'}}, session)); }
+        catch (error) { failure(error); }
+        finally { $('cancel').disabled = false; }
+      };
+
+      $('new-trip').onclick = () => {
+        try { localStorage.removeItem(tripKey); } catch { /* storage blocked */ }
+        trip = null; tripId = null; roadTrip = null; seen.clear(); primed = false;
+        for (const kind of ['pickup', 'destination']) { markers[kind]?.remove(); markers[kind] = null; route[kind] = null; $(`${kind}-address`).value = ''; }
+        drawLine(); setPicking('pickup');
+        $('fare').textContent = '—'; $('fare-meta').innerHTML = 'Chọn đủ hai điểm<br>để xem giá'; $('book').disabled = true;
+        renderTrip(); poll();
+      };
+
+      async function nearby() {
+        const center = route.pickup ? {lat: route.pickup.latitude, lng: route.pickup.longitude} : map.getCenter();
+        const drivers = await api(`/api/drivers/nearby?latitude=${center.lat}&longitude=${center.lng}&radiusKm=3&size=20`, {}, session);
+        driversLayer.clearLayers();
+        for (const driver of drivers) if (driver.location) L.marker([driver.location.latitude, driver.location.longitude], {icon: pinIcon('car'), interactive: false, keyboard: false}).addTo(driversLayer);
+        $('nearby-count').textContent = drivers.length ? `${drivers.length} tài xế sẵn sàng trong bán kính 3 km` : 'Chưa có tài xế sẵn sàng gần đây';
+      }
+
+      let polling = false;
+      async function poll() {
+        if (polling) return;
+        polling = true;
+        try {
+          if (tripId) {
+            const [next, notes] = await Promise.all([
+              api(`/api/trips/${tripId}`, {}, session),
+              api(`/api/notifications/trip/${tripId}`, {}, session).catch(() => null),
+            ]);
+            follow(next);
+            if (notes) renderInbox(notes);
+          } else await nearby();
+        } catch (error) {
+          if (error.status === 404 && tripId) { $('new-trip').onclick(); return; }
+          if (!poll.warned) { poll.warned = true; toast('Mất kết nối tạm thời', 'Ứng dụng sẽ tự thử lại.', 'warn'); }
+          return;
+        } finally { polling = false; }
+        poll.warned = false;
+      }
+      poll();
+      setInterval(poll, 3000);
+    }
+  </script>
+</body>
+</html>
