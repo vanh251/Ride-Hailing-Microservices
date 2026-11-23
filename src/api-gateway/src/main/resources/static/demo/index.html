@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Không gian demo hệ thống gọi xe phân tán: hành khách, tài xế và theo dõi phục hồi dịch vụ.">
+  <title>Đi · Ride Lab</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <svg class="svg-defs" aria-hidden="true"><defs>
+    <symbol id="i-car" viewBox="0 0 24 24"><path d="m5 10 2-6h10l2 6M4 10h16v8H4zM7 18v2m10-2v2M7 14h1m8 0h1"/></symbol>
+    <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M4 22v-3a8 8 0 0 1 16 0v3"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M2 12h5l3-8 4 16 3-8h5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7a9 9 0 1 0 1 9M20 2v6h-6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L20 5"/></symbol>
+  </defs></svg>
+  <a class="skip-link" href="#main">Đến nội dung chính</a>
+  <aside class="sidebar">
+    <a class="brand" href="#passenger"><span class="brand-mark">đi<span>·</span></span><span>Ride Lab<small>DISTRIBUTED SYSTEMS</small></span></a>
+    <div class="nav-label">KHÔNG GIAN DEMO</div>
+    <nav aria-label="Màn hình demo">
+      <a href="#passenger" data-view="passenger" class="nav-item active"><svg><use href="#i-person"/></svg>Hành khách<span>A / B</span></a>
+      <a href="#driver" data-view="driver" class="nav-item"><svg><use href="#i-car"/></svg>Tài xế</a>
+      <a href="#console" data-view="console" class="nav-item"><svg><use href="#i-grid"/></svg>Trung tâm demo<span>9</span></a>
+    </nav>
+    <div class="sidebar-bottom"><span class="lab-pill">DS03 · LOCAL LAB</span><p>Một chuyến đi.<br>Nhiều dịch vụ cùng vận hành.</p><div class="sidebar-tools"><a id="grafana-side" target="_blank" rel="noopener">Grafana</a><a id="prometheus-side" target="_blank" rel="noopener">Prometheus</a></div><small>Dừng / khởi động service<br>trong Docker Desktop.</small></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><div class="breadcrumb">Ride Lab <span>/</span> <span id="breadcrumb">Hành khách</span></div><div class="topbar-right"><span id="gateway-status" class="connection">Đang kết nối Gateway…</span><button id="refresh" class="icon-button" aria-label="Làm mới trạng thái"><svg><use href="#i-refresh"/></svg></button></div></header>
+    <main id="main">
+      <div class="page-heading"><div><div class="eyebrow">HỆ THỐNG GỌI XE PHÂN TÁN</div><h1 id="page-title">Chuyến đi tiếp theo của bạn.</h1><p id="page-subtitle">Đặt chuyến, quan sát matching và theo dõi thanh toán trên cùng một hành trình.</p></div><button id="prepare" class="button primary"><span>＋</span> Chuẩn bị demo mới</button></div>
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <div class="summary-strip"><div><span class="metric-icon"><svg><use href="#i-person"/></svg></span><div><small>Phiên hành khách</small><strong id="session-count">0 / 2 sẵn sàng</strong></div></div><div><span class="metric-icon teal"><svg><use href="#i-car"/></svg></span><div><small>Tài xế demo</small><strong id="driver-summary">Chưa đăng nhập</strong></div></div><div><span class="metric-icon lavender"><svg><use href="#i-pulse"/></svg></span><div><small>Đồng bộ trạng thái</small><strong id="last-sync">Chưa có dữ liệu</strong></div></div></div>
+
+      <section id="view-passenger" class="view">
+        <div class="two-column">
+          <div>
+            <section class="card booking-card"><div class="section-title"><h2>Bạn muốn đi đâu?</h2><span class="subtle">01 · ĐẶT CHUYẾN</span></div>
+              <div class="passenger-switch" role="group" aria-label="Chọn hành khách"><button data-passenger="a" class="selected">Hành khách A<span id="slot-a-state">Chưa đăng nhập</span></button><button data-passenger="b">Hành khách B<span id="slot-b-state">Chưa đăng nhập</span></button></div>
+              <div id="passenger-account" class="account-line"></div>
+              <div id="pending-booking" class="info-box error" role="status" hidden></div>
+              <form id="booking-form">
+                <div class="route-input"><span class="route-node pickup-node"></span><label for="pickup-address">Điểm đón<input id="pickup-address" name="pickup-address" value="Điểm đón demo" required maxlength="180"></label></div>
+                <div class="coordinate-row"><label>Vĩ độ<input id="pickup-lat" type="number" min="-90" max="90" step="any" required value="10.8"></label><label>Kinh độ<input id="pickup-lng" type="number" min="-180" max="180" step="any" required value="106.6"></label></div>
+                <div class="route-input destination"><span class="route-node destination-node"></span><label for="destination-address">Điểm đến<input id="destination-address" name="destination-address" value="Điểm đến demo" required maxlength="180"></label></div>
+                <div class="coordinate-row"><label>Vĩ độ<input id="destination-lat" type="number" min="-90" max="90" step="any" required value="10.82"></label><label>Kinh độ<input id="destination-lng" type="number" min="-180" max="180" step="any" required value="106.62"></label></div>
+                <div class="fare-row"><div><small>Giá cước ước tính</small><strong id="quote-amount">— <span>VND</span></strong></div><button id="quote" class="button secondary" type="button">Ước tính giá</button></div>
+                <button id="book" class="button primary full" type="submit"><svg><use href="#i-car"/></svg>Đặt chuyến</button>
+              </form>
+            </section>
+            <details class="card login-details"><summary>Đăng nhập tài khoản có sẵn</summary><form id="login-form" class="login-form"><label>Phiên đăng nhập<select id="login-slot"><option value="a">Hành khách A</option><option value="b">Hành khách B</option><option value="driver">Tài xế</option></select></label><label>Email<input id="login-email" type="email" autocomplete="username" required></label><label>Mật khẩu<input id="login-password" type="password" autocomplete="current-password" required></label><button class="button secondary" type="submit">Đăng nhập</button></form></details>
+            <details class="card login-details"><summary>Khôi phục theo dõi bằng Trip ID</summary><p class="muted">Dùng cho phiên hành khách đang chọn. Nếu lần đặt bị timeout, đối chiếu Correlation ID trong database để lấy Trip ID; giao diện không tự gửi lại yêu cầu.</p><form id="recover-form" class="login-form"><label>Trip ID<input id="recover-id" required pattern="[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" spellcheck="false"></label><button class="button secondary" type="submit">Khôi phục chuyến</button></form></details>
+          </div>
+          <div class="trip-column">
+            <section class="route-map" aria-label="Sơ đồ hành trình minh họa"><div class="map-caption"><span class="map-label"><svg><use href="#i-pin"/></svg>Hành trình của bạn</span><span>Sơ đồ minh họa · không định vị GPS</span></div><svg class="map-art" viewBox="0 0 700 290" aria-hidden="true"><defs><pattern id="blocks" width="92" height="73" patternTransform="rotate(-17)" patternUnits="userSpaceOnUse"><rect x="8" y="8" width="76" height="57" rx="8" fill="#e6ecf1"/><path d="M0 0h92v73H0Z" fill="none" stroke="#fff" stroke-width="9"/></pattern></defs><rect width="700" height="290" fill="#eef3f7"/><rect width="700" height="290" fill="url(#blocks)"/><path d="M-30 225c150-15 150-100 275-90s220 130 475-30" fill="none" stroke="#cce9e5" stroke-width="48"/><path d="M156 203V105h227v76h153" fill="none" stroke="white" stroke-width="16" stroke-linejoin="round"/><path d="M156 203V105h227v76h153" fill="none" stroke="#235ce2" stroke-width="7" stroke-linejoin="round"/><circle cx="156" cy="203" r="13" fill="#235ce2" stroke="white" stroke-width="5"/><circle cx="536" cy="181" r="13" fill="#0c9a88" stroke="white" stroke-width="5"/><rect x="118" y="233" width="88" height="27" rx="8" fill="white"/><text x="162" y="251" text-anchor="middle" fill="#344054" font-size="13">ĐIỂM ĐÓN</text><rect x="491" y="211" width="88" height="27" rx="8" fill="white"/><text x="535" y="229" text-anchor="middle" fill="#344054" font-size="13">ĐIỂM ĐẾN</text><g transform="translate(315 87)"><rect width="42" height="34" rx="10" fill="#12233f"/><path d="m10 15 4-6h14l4 6v10H10Z" fill="white"/><circle cx="16" cy="25" r="3" fill="#12233f"/><circle cx="27" cy="25" r="3" fill="#12233f"/></g></svg></section>
+            <section class="card"><div class="section-title"><h2>Chuyến đang theo dõi</h2><span id="trip-status" class="badge neutral">CHƯA CÓ CHUYẾN</span></div><div id="trip-detail" class="empty-state"><span class="empty-icon"><svg><use href="#i-car"/></svg></span><h3>Hành trình bắt đầu từ một yêu cầu.</h3><p>Chuẩn bị hồ sơ demo hoặc đăng nhập, sau đó chọn điểm đón và đặt chuyến.</p></div><div id="trip-progress" class="trip-progress" hidden></div><div class="trip-controls"><button id="cancel-trip" class="button danger" hidden>Hủy chuyến</button><button id="copy-trip" class="button quiet" hidden>Sao chép Trip ID</button></div><div id="payment-detail"></div></section>
+            <section class="card"><div class="section-title"><h2>Thông báo chuyến đi</h2><span class="subtle">NOTIFICATION SERVICE</span></div><div id="notifications" class="notification-list"><p class="muted">Thông báo của chuyến sẽ xuất hiện tại đây.</p></div></section>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-driver" class="view" hidden>
+        <div class="two-column driver-layout"><section class="card"><div class="section-title"><h2>Trạm tài xế</h2><span id="driver-status" class="badge neutral">CHƯA ĐĂNG NHẬP</span></div><div class="driver-profile"><span class="avatar driver-avatar">D</span><div><h3 id="driver-name">Tài xế demo</h3><p id="driver-id" class="mono muted">Chưa có phiên tài xế</p></div></div><p class="muted">Vị trí được lấy từ điểm đón của biểu mẫu Hành khách. Cập nhật vị trí trước khi bật nhận chuyến.</p><button id="driver-location" class="button secondary full">Cập nhật vị trí gần điểm đón</button><div class="button-row"><button id="driver-available" class="button primary">Bật AVAILABLE</button><button id="driver-offline" class="button secondary">Chuyển OFFLINE</button></div><div class="info-box">Matching giữ tài xế theo lease và version. Chỉ sau xác nhận của Driver, chuyến mới chuyển sang ASSIGNED.</div></section><section class="card"><div class="section-title"><h2>Điều khiển chuyến</h2><svg class="heading-icon"><use href="#i-car"/></svg></div><label>Chọn chuyến demo<select id="driver-trip-slot"><option value="a">Chuyến hành khách A</option><option value="b">Chuyến hành khách B</option></select></label><div id="driver-trip-detail" class="empty-state compact"><p>Chưa có chuyến được gán cho tài xế này.</p></div><div class="driver-actions"><button id="driver-accept" class="button secondary">Nhận chuyến</button><button id="driver-start" class="button primary">Bắt đầu</button><button id="driver-complete" class="button primary">Hoàn thành chuyến</button></div><p class="small muted">“Nhận chuyến” xác nhận qua API; backend giữ trạng thái ASSIGNED cho đến khi “Bắt đầu”.</p></section></div>
+      </section>
+
+      <section id="view-console" class="view" hidden>
+        <div class="console-grid"><section class="card"><div class="section-title"><h2>Hai yêu cầu. Một tài xế.</h2><span class="badge neutral">CONCURRENCY</span></div><p class="muted">Dùng cùng điểm đón và hai phiên hành khách độc lập. Hệ thống kiểm tra chỉ có đúng một tài xế demo AVAILABLE trong vùng trước khi gửi.</p><div id="race-trips" class="race-trips"></div><button id="race" class="button primary full">Gửi đồng thời A + B</button><div id="race-result" class="info-box">Chuẩn bị demo, cập nhật vị trí và bật AVAILABLE trước khi chạy.</div><p class="small muted">Kết luận từ phản hồi API. Quyền sở hữu và version trong database cần đối chiếu bằng lệnh bên dưới.</p></section><section class="card operations"><div class="section-title"><h2>Điều hành & quan sát</h2><svg class="heading-icon"><use href="#i-pulse"/></svg></div><p class="muted">Thao tác service qua Docker Desktop hoặc copy lệnh chạy ở thư mục gốc dự án. Giao diện không điều khiển Docker.</p><label>Tiền tố lệnh Compose<input id="compose-prefix" value="docker compose" spellcheck="false"></label><div class="command-row"><code id="stop-command">docker compose stop payment-service</code><button class="button quiet" data-copy="stop">Copy</button></div><div class="command-row"><code id="start-command">docker compose start payment-service</code><button class="button quiet" data-copy="start">Copy</button></div><details><summary>Cấu hình liên kết giám sát</summary><label>Grafana URL<input id="grafana-url" type="url" value="http://localhost:3000"></label><label>Prometheus URL<input id="prometheus-url" type="url" value="http://localhost:9090"></label><button id="save-settings" class="button secondary">Lưu cấu hình</button></details><div class="button-row"><a id="grafana-link" class="button secondary" target="_blank" rel="noopener">Mở Grafana</a><a id="prometheus-link" class="button secondary" target="_blank" rel="noopener">Mở Prometheus</a></div></section></div>
+        <section class="card runbook"><div class="section-title"><div><h2>9 kịch bản trình diễn</h2><p class="muted">Thứ tự thao tác và bằng chứng cần quan sát.</p></div><span class="subtle">DEMO RUNBOOK</span></div><div id="scenario-list"></div></section>
+      </section>
+
+      <section class="card observation-card"><div class="section-title"><div><h2>Nhật ký quan sát</h2><p class="muted">Phản hồi HTTP và trạng thái đọc được từ API · không phải Kafka/Saga log.</p></div><button id="export-log" class="button quiet">Xuất nhật ký</button></div><div id="observation-log" class="observation-log" aria-live="off"><p class="muted">Chưa có thao tác. Mỗi hành trình sẽ có Trip ID và Correlation ID để đối chiếu.</p></div></section>
+      <footer><span>Đi · Ride Lab / DS03</span><span>API thật · Kafka bất đồng bộ · PostgreSQL riêng từng service</span><button id="clear-session" class="text-button">Xóa phiên trên trình duyệt</button></footer>
+    </main>
+  </div>
+</body>
+</html>

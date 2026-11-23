@@ -39,6 +39,7 @@ public class SecurityConfig {
                 // with 401 instead of the real 5xx, because the JWT filter does not run again on that dispatch
                 .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                 .requestMatchers("/actuator/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/demo/**").permitAll()
                 .requestMatchers(HttpMethod.POST,
                     "/api/auth/register/passenger",
                     "/api/auth/register/driver",
