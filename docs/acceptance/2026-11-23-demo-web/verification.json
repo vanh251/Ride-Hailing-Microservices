@@ -1,0 +1,35 @@
+{
+  "date": "2026-11-23",
+  "base_commit": "d547f20",
+  "feature": "Local Passenger A/B, Driver and demonstration dashboard served by Gateway",
+  "source_checkout": "D:/Nam_4/He-thong-phan-tan/ds-project",
+  "gateway_tests": {"tests": 173, "failures": 0, "errors": 0, "skipped": 0, "bootJar": "PASS"},
+  "client_tests": {"tests": 9, "failures": 0, "skipped": 0},
+  "application_handler_e2e": {
+    "result": "PASS",
+    "gateway": "http://localhost:18080",
+    "method": "Actual app.js event handlers and real Gateway HTTP requests, using a minimal DOM fixture rather than an automated browser",
+    "cases": [
+      "Reject blank route coordinates",
+      "Create demo accounts, login, update Driver location and availability, quote and book a trip",
+      "Reauthenticate the same passenger without losing the active trip",
+      "Accept and start a trip, stop Payment, complete the real trip and observe COMPLETED",
+      "Restart Payment and observe the same trip PAID with SUCCESS payment",
+      "Dispatch two passenger requests concurrently and observe exclusive driver assignment",
+      "Cancel trips and observe Driver AVAILABLE",
+      "Simulate a lost HTTP response after real booking commit, block duplicate booking, reconcile with Trip ID",
+      "Mark stale Driver state independently of successful Trip polling"
+    ],
+    "payment_recovery_trip": "a5cdc8a7-263c-4f19-a96f-2a354f15076d",
+    "concurrent_trips": ["2ff77bed-2e2a-4fd1-bc77-5c181f7fff60", "e49948fd-0f8e-4b62-9e6d-dffefd62b17f"],
+    "lost_response_trip": "17e4aa44-ca79-40a4-85da-37fc277c7686",
+    "transcript": "application-e2e.txt"
+  },
+  "visual_browser_qa": {
+    "result": "NOT VERIFIED",
+    "reason": "Browser access host unavailable; native Computer Use was not approved to use Google Chrome. No alternate browser automation was used to bypass the restriction."
+  },
+  "review": "Independent read-only review completed; important Driver response-shape, reauthentication, ambiguous booking, stopped-service lag, route validation and stale-status findings were addressed and tested",
+  "data": "Dedicated acceptance PostgreSQL/Kafka volumes; existing main-stack application data was not migrated or deleted",
+  "integration": "Reviewed source files copied from isolated worktree after original-file baseline checks and byte-for-byte hash validation; no commit or push"
+}
