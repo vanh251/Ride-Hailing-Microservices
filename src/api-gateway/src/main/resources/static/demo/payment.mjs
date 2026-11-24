@@ -9,7 +9,7 @@ export function paymentView(trip, payment, role) {
   return {visible: true, paid: false, canPay: role === 'PASSENGER', title: 'Chờ thanh toán',
     message: role === 'DRIVER' ? 'Chờ khách thanh toán qua payOS. Bạn không cần thu thêm tiền mặt.'
       : expired ? 'Phiên thanh toán trước đã kết thúc. Bấm thanh toán để thử lại.'
-      : 'Mở payOS để quét QR hoặc thanh toán bằng ứng dụng ngân hàng.'};
+      : 'Mở payOS để quét QR hoặc thanh toán bằng ứng dụng ngân hàng. Sau khi chuyển khoản, trang tự cập nhật trong vài giây.'};
 }
 
 export function checkoutUrl(value) {
@@ -20,7 +20,7 @@ export function checkoutUrl(value) {
   return url.href;
 }
 
-// One panel on each role page. Existing trip polling refreshes payment state;
+// One panel on each role page. Existing trip polling refreshes payment state (the backend asks payOS on these reads);
 // URL return/cancel parameters are never proof that money was received.
 export function paymentPanel(session) {
   let trip = null, payment = null, error = '', generation = 0, loading = false, creating = false, lastCheck = 0;
@@ -35,12 +35,10 @@ export function paymentPanel(session) {
     $('pay-checkout').hidden = !view.canPay;
     $('pay-checkout').disabled = creating;
     $('pay-checkout').textContent = creating ? 'Đang mở thanh toán…' : 'Thanh toán payOS';
-    $('payment-refresh').disabled = loading || creating;
-    $('payment-refresh').hidden = view.paid;
   }
   function showError(problem) {
     error = problem.status === 503 ? 'Thanh toán trực tuyến tạm thời chưa sẵn sàng. Vui lòng thử lại sau hoặc liên hệ hỗ trợ.'
-      : 'Chưa kiểm tra được thanh toán. Vui lòng thử lại; không thanh toán thêm nếu đã chuyển tiền.';
+      : 'Chưa kiểm tra được thanh toán, trang sẽ tự thử lại. Không thanh toán thêm nếu đã chuyển tiền.';
   }
   async function refresh() {
     if (loading || creating || !paymentView(trip, payment, session.role).visible || trip.status === 'PAID') return;
@@ -53,7 +51,6 @@ export function paymentPanel(session) {
     } catch (problem) { if (asked === generation) showError(problem); }
     finally { if (asked === generation) { loading = false; render(); } }
   }
-  $('payment-refresh').onclick = refresh;
   $('pay-checkout').onclick = async () => {
     if (!passenger || creating || !paymentView(trip, payment, session.role).canPay) return;
     // Invalidate any GET begun before this mutation so an old PENDING response

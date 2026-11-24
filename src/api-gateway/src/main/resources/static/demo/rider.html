@@ -51,7 +51,7 @@
       <p id="nearest-driver" class="location-summary" role="status"></p>
       <button id="refresh-nearby" class="btn ghost small" type="button">Cập nhật xe gần đây</button>
       <div class="fare">
-        <div><small>Giá ước tính</small><strong id="fare">—</strong></div>
+        <div><small>Giá chuyến đi</small><strong id="fare">—</strong></div>
         <div class="meta" id="fare-meta">Chọn đủ hai điểm<br>để xem giá</div>
       </div>
       <button id="book" class="btn primary block" disabled>Đặt xe</button>
@@ -70,7 +70,6 @@
         <h2 id="payment-title">Chờ thanh toán</h2>
         <p id="payment-message" class="location-summary" role="status"></p>
         <button id="pay-checkout" class="btn primary block" type="button">Thanh toán payOS</button>
-        <button id="payment-refresh" class="btn ghost small" type="button">Kiểm tra thanh toán</button>
       </div>
       <div class="actions">
         <button id="cancel" class="btn danger">Hủy chuyến</button>
@@ -292,7 +291,7 @@
         $('facts').innerHTML = `
           <div class="wide"><dt>Điểm đón</dt><dd>${esc(trip.pickup?.address)}</dd></div>
           <div class="wide"><dt>Điểm đến</dt><dd>${esc(trip.destination?.address)}</dd></div>
-          <div><dt>${trip.finalFare != null ? 'Giá cuối cùng' : 'Giá ước tính'}</dt><dd>${money(trip.finalFare ?? trip.estimatedFare)}</dd></div>
+          <div><dt>Giá chuyến đi</dt><dd>${money(trip.finalFare ?? trip.estimatedFare)}</dd></div>
           <div><dt>Tài xế</dt><dd>${trip.driverId ? `Mã ${esc(trip.driverId.slice(0, 8))}` : 'Chưa có'}</dd></div>`;
         $('cancel').hidden = !canCancel(trip);
         $('new-trip').hidden = !TERMINAL.has(trip.status);
