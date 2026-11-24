@@ -42,6 +42,12 @@ public class TripResponse {
     @Schema(description = "Final calculated fare upon completion in VND", example = "47500")
     private BigDecimal finalFare;
 
+    @Schema(description = "Payment provider", allowableValues = {"MOCK", "PAYOS"})
+    private String paymentProvider;
+
+    @Schema(description = "Fare currency", example = "VND")
+    private String currency;
+
     @Schema(description = "Distributed trace correlation ID", example = "corr-550e8400-e29b-41d4-a716-446655440000")
     private String correlationId;
 

@@ -49,7 +49,7 @@ const NOTE_TEXT = {
     RideRequested: ['Đã gửi yêu cầu đặt xe', 'Hệ thống đang tìm tài xế gần bạn.'],
     DriverAssignmentConfirmed: ['Đã có tài xế', 'Tài xế đã nhận chuyến và đang đến điểm đón.'],
     TripStarted: ['Chuyến đi bắt đầu', 'Chúc bạn có một chuyến đi vui vẻ.'],
-    TripCompleted: ['Đã đến nơi', 'Chuyến đi kết thúc. Hệ thống đang thanh toán.'],
+    TripCompleted: ['Đã đến nơi', 'Chuyến đi kết thúc. Vui lòng kiểm tra thông tin thanh toán.'],
     PaymentSucceeded: ['Thanh toán thành công', 'Cảm ơn bạn đã đi cùng Đi.'],
     PaymentFailed: ['Thanh toán thất bại', 'Vui lòng liên hệ hỗ trợ để hoàn tất thanh toán.'],
     TripCancelled: ['Chuyến đã hủy', 'Chuyến đi của bạn đã được hủy.'],

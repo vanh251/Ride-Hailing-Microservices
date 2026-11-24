@@ -31,6 +31,10 @@
   </header>
   <main class="stage">
     <div id="map" class="map" role="application" aria-label="Bản đồ vị trí tài xế và chuyến đi"></div>
+    <div class="map-tools">
+      <button id="locate-me" class="btn ghost small" type="button">Vị trí của tôi</button>
+      <div class="map-key"><span class="green">Xe: Vị trí của bạn</span><span class="green">● Điểm đón khách được ghép</span><span class="red">■ Điểm đến của chuyến</span></div>
+    </div>
     <section class="sheet" aria-labelledby="driver-name">
       <div class="profile">
         <span id="avatar" class="avatar">Đ</span>
@@ -41,11 +45,27 @@
         <input id="online" class="toggle" type="checkbox" role="switch" aria-label="Nhận chuyến" disabled>
       </div>
       <p class="hint"><svg class="icon"><use href="#i-tap"/></svg><span id="location-hint">Chạm vào bản đồ để cập nhật vị trí của bạn.</span></p>
+      <details class="place-preview">
+        <summary>Tìm điểm đi / điểm đến</summary>
+        <p class="hint">Chỉ tra cứu địa điểm. Không thay đổi vị trí xe hoặc hành trình khách đã đặt.</p>
+        <div class="route">
+          <div class="route-field"><span class="dot pickup"></span><label>Điểm đi<input id="pickup-address" placeholder="Nhập địa điểm để tra cứu" maxlength="180" autocomplete="off" aria-describedby="pickup-search-status"></label><button id="pickup-search" class="btn ghost small" type="button" aria-label="Tìm điểm đi" aria-controls="pickup-results">Tìm</button><small id="pickup-search-status" class="search-status" role="status"></small><ul id="pickup-results" class="search-results" aria-label="Kết quả điểm đi" hidden></ul></div>
+          <div class="route-field"><span class="dot destination"></span><label>Điểm đến<input id="destination-address" placeholder="Nhập địa điểm để tra cứu" maxlength="180" autocomplete="off" aria-describedby="destination-search-status"></label><button id="destination-search" class="btn ghost small" type="button" aria-label="Tìm điểm đến" aria-controls="destination-results">Tìm</button><small id="destination-search-status" class="search-status" role="status"></small><ul id="destination-results" class="search-results" aria-label="Kết quả điểm đến" hidden></ul></div>
+        </div>
+        <button id="clear-preview" class="btn ghost small" type="button">Xóa điểm tra cứu</button>
+      </details>
 
       <div id="job" class="job" hidden>
         <span id="job-pill" class="status-pill"></span>
         <div class="sheet-section"><h1 id="job-title"></h1><p id="job-sub" class="muted"></p></div>
         <dl id="job-facts" class="facts"></dl>
+        <p id="customer-location" class="location-summary"></p>
+        <div id="payment-panel" class="payment-panel" aria-labelledby="payment-title" hidden>
+          <h2 id="payment-title">Chờ thanh toán</h2>
+          <p id="payment-message" class="location-summary" role="status"></p>
+          <button id="pay-checkout" class="btn primary block" type="button" hidden>Thanh toán payOS</button>
+          <button id="payment-refresh" class="btn ghost small" type="button">Kiểm tra thanh toán</button>
+        </div>
         <div class="actions">
           <button id="accept" class="btn primary">Nhận chuyến</button>
           <button id="start" class="btn primary">Đã đón khách, bắt đầu</button>
@@ -64,7 +84,9 @@
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
   <script type="module">
-    import {$, esc, api, requireRole, renderAccount, toast, failure, makeMap, pinIcon} from './ride.mjs';
+    import {$, esc, api, requireRole, renderAccount, toast, failure, makeMap, pinIcon, placeSearch, locateMe, focusPoint} from './ride.mjs';
+    import {distanceKm} from './geo.mjs';
+    import {paymentPanel} from './payment.mjs';
     import {TERMINAL, unseen, assignedTripId, money, noteText} from './ride-core.mjs';
     import {driverActions} from './client.mjs';
 
@@ -75,6 +97,7 @@
       renderAccount(session, 'Tài xế');
       const me = session.userId;
       const map = makeMap($('map'));
+      const payments = paymentPanel(session);
       const JOB = {
         ASSIGNED: ['Chuyến mới', 'Đến điểm đón hành khách', 'ok live'],
         IN_PROGRESS: ['Đang chở khách', 'Đưa hành khách đến điểm đến', 'ok live'],
@@ -90,6 +113,24 @@
       let driver = null, trip = null, tripId = null, meMarker = null, line = null, located = false, primed = false, acting = false;
       const accepted = new Set(), seen = new Set(), tripMarkers = {};
       const road = {tripId: null, points: null};
+      const preview = {}, searches = {};
+      for (const kind of ['pickup', 'destination']) searches[kind] = placeSearch(kind, map, point => {
+        preview[kind]?.remove();
+        preview[kind] = L.marker([point.latitude, point.longitude], {icon: pinIcon(kind), title: 'Địa điểm tra cứu'})
+          .bindPopup(`Tra cứu · ${esc(point.address)}`).addTo(map);
+        focusPoint(map, [point.latitude, point.longitude], 16);
+      }, () => { preview[kind]?.remove(); delete preview[kind]; });
+      $('clear-preview').onclick = () => {
+        for (const kind of ['pickup', 'destination']) { searches[kind].clear(); preview[kind]?.remove(); delete preview[kind]; $(`${kind}-address`).value = ''; }
+      };
+      locateMe($('locate-me'), async position => {
+        const {latitude, longitude} = position.coords;
+        await api(`/api/drivers/${me}/location`, {method: 'PATCH', body: {latitude, longitude}}, session);
+        // Apply the acknowledged report immediately; profile polling may already be in flight.
+        if (driver) { driver.location = {latitude, longitude}; renderDriver(); }
+        focusPoint(map, [latitude, longitude], 16);
+        toast('Đã cập nhật vị trí GPS', 'Vị trí này được dùng để hệ thống tự ghép chuyến.', 'success');
+      });
 
       function renderDriver() {
         $('driver-name').textContent = driver.fullName || 'Tài xế';
@@ -105,11 +146,19 @@
           const latlng = [driver.location.latitude, driver.location.longitude];
           if (!meMarker) meMarker = L.marker(latlng, {icon: pinIcon('car'), keyboard: false, title: 'Vị trí của bạn'}).addTo(map);
           else meMarker.setLatLng(latlng);
-          if (!located) { located = true; if (!trip) map.setView(latlng, 15); }
+          if (!located) { located = true; if (!trip) focusPoint(map, latlng, 15); }
         }
+        renderCustomerLocation();
+      }
+
+      function renderCustomerLocation() {
+        $('customer-location').textContent = trip?.pickup && driver?.location && !TERMINAL.has(trip.status)
+          ? `Khách được ghép: điểm đón cách bạn ${distanceKm(driver.location, trip.pickup).toFixed(2)} km đường chim bay. Đây là điểm đón đã đặt, không phải GPS trực tiếp của khách.` : '';
       }
 
       function renderJob() {
+        payments.update(trip);
+        renderCustomerLocation();
         const show = Boolean(trip);
         $('job').hidden = !show;
         $('no-job').hidden = show;
@@ -133,7 +182,9 @@
         $('complete').hidden = !actions.includes('complete');
         for (const id of ['accept', 'start', 'complete']) $(id).disabled = acting;
         const points = ['pickup', 'destination'].filter(kind => trip[kind]).map(kind => {
-          tripMarkers[kind] = L.marker([trip[kind].latitude, trip[kind].longitude], {icon: pinIcon(kind), keyboard: false}).addTo(map);
+          const title = kind === 'pickup' ? 'Khách hàng · điểm đón' : 'Điểm đến của khách';
+          tripMarkers[kind] = L.marker([trip[kind].latitude, trip[kind].longitude], {icon: pinIcon(kind), title, keyboard: false})
+            .bindPopup(`${esc(title)} · ${esc(trip[kind].address)}`).addTo(map);
           return [trip[kind].latitude, trip[kind].longitude];
         });
         if (points.length === 2 && road.tripId !== trip.tripId) {

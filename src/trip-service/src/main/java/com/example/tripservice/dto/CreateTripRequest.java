@@ -1,8 +1,10 @@
 package com.example.tripservice.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.fasterxml.jackson.annotation.JsonCreator;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -10,7 +12,7 @@ import java.util.UUID;
 
 @Getter
 @Setter
-@NoArgsConstructor
+@NoArgsConstructor(onConstructor_ = @JsonCreator)
 @AllArgsConstructor
 @Builder
 @Schema(description = "Request body to create a new ride request")
@@ -33,5 +35,11 @@ public class CreateTripRequest {
 
     @Schema(description = "Ignored; estimated fare is obtained from Pricing Service", deprecated = true)
     private BigDecimal estimatedFare;
+
+    @NotNull(message = "Payment provider is required")
+    @Pattern(regexp = "MOCK|PAYOS", message = "Payment provider must be MOCK or PAYOS")
+    @Schema(description = "Payment provider", allowableValues = {"MOCK", "PAYOS"}, defaultValue = "MOCK")
+    @Builder.Default
+    private String paymentProvider = "MOCK";
 
 }

@@ -214,8 +214,10 @@ class TripLifecycleIntegrationTest {
             .filter(e -> e.getAggregateId().equals(trip.toString()) && e.getEventType().equals("TripCompleted"))
             .findFirst()
             .orElseThrow();
-        assertEquals(8, mapper.readTree(completed.getPayload()).get("payload").size());
-        assertTrue(mapper.readTree(completed.getPayload()).get("payload").get("finalFare").isNumber());
+        var payload = mapper.readTree(completed.getPayload()).get("payload");
+        assertEquals(9, payload.size());
+        assertEquals("MOCK", payload.get("paymentProvider").asString());
+        assertTrue(payload.get("finalFare").isNumber());
     }
 
     @Test

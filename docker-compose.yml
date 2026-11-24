@@ -156,6 +156,37 @@ services:
     networks:
       - ride-hailing-network
 
+  loki:
+    image: grafana/loki:3.7.10
+    container_name: loki
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./deploy/monitoring/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    restart: unless-stopped
+    networks:
+      - ride-hailing-network
+
+  alloy:
+    image: grafana/alloy:v1.22.0
+    container_name: alloy
+    user: "0:0"
+    command:
+      - run
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-ds-project}
+    volumes:
+      - ./deploy/monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    depends_on:
+      - loki
+    restart: unless-stopped
+    networks:
+      - ride-hailing-network
+
   grafana:
     image: grafana/grafana:11.2.0
     container_name: grafana
@@ -337,6 +368,14 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       PAYMENT_FAILURE_MODE: ${PAYMENT_FAILURE_MODE:-none}
       PAYMENT_FAILURE_RATE: ${PAYMENT_FAILURE_RATE:-0.0}
+      JWT_SECRET: ${JWT_SECRET}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      TRIP_SERVICE_URL: http://trip-service:8083
+      PAYOS_CLIENT_ID: ${PAYOS_CLIENT_ID:-}
+      PAYOS_API_KEY: ${PAYOS_API_KEY:-}
+      PAYOS_CHECKSUM_KEY: ${PAYOS_CHECKSUM_KEY:-}
+      PAYOS_RETURN_URL: ${PAYOS_RETURN_URL:-http://localhost:8080/demo/rider.html}
+      PAYOS_CANCEL_URL: ${PAYOS_CANCEL_URL:-http://localhost:8080/demo/rider.html}
     depends_on:
       payment-db:
         condition: service_healthy
@@ -439,3 +478,5 @@ volumes:
   kafka_data:
   prometheus_data:
   grafana_data:
+  loki_data:
+  alloy_data:

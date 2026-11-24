@@ -80,6 +80,10 @@ public class Trip {
     @Builder.Default
     private String currency = "VND";
 
+    @Column(name = "payment_provider", nullable = false, length = 10)
+    @Builder.Default
+    private String paymentProvider = "MOCK";
+
     @Column(name = "correlation_id", nullable = false)
     private String correlationId;
 
