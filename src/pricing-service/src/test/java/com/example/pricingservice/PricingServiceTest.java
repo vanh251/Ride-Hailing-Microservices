@@ -1,5 +1,6 @@
 package com.example.pricingservice;
 
+import com.example.pricingservice.client.RoutingClient;
 import com.example.pricingservice.dto.request.FinalFareRequest;
 import com.example.pricingservice.dto.request.LocationDto;
 import com.example.pricingservice.dto.request.QuoteRequest;
@@ -12,16 +13,43 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class PricingServiceTest {
 
     private PricingService pricingService;
+    private RoutingClient routingClient;
 
+    // Without a road route (routing server down) the quote uses the straight-line estimate, as most tests below check
     @BeforeEach
     void setUp() {
-        pricingService = new PricingServiceImpl();
+        routingClient = mock(RoutingClient.class);
+        when(routingClient.drivingRoute(any(), any())).thenReturn(Optional.empty());
+        pricingService = new PricingServiceImpl(routingClient);
+    }
+
+    @Test
+    @DisplayName("calculateQuote prices the driving distance along the streets and returns the road for the map")
+    void calculateQuote_roadRoute_usesDrivingDistance() {
+        List<List<Double>> road = List.of(List.of(21.0242, 105.8576), List.of(21.0260, 105.8450), List.of(21.0293, 105.8355));
+        when(routingClient.drivingRoute(any(), any())).thenReturn(Optional.of(new RoutingClient.Route(2.98, road)));
+
+        QuoteResponse response = pricingService.calculateQuote(QuoteRequest.builder()
+                .pickup(new LocationDto(21.0242, 105.8576, "Nha hat Lon"))
+                .destination(new LocationDto(21.0293, 105.8355, "Van Mieu"))
+                .build());
+
+        // 2.98 km -> 3.0 km, at 20 km/h -> 9 min: 15000 + 3.0 * 5000 + 9 * 500
+        assertEquals(3.0, response.getEstimatedDistanceKm());
+        assertEquals(9, response.getEstimatedDurationMin());
+        assertMoney("34500", response.getTotalFare());
+        assertEquals(road, response.getRoutePoints());
     }
 
     private static void assertMoney(String expected, BigDecimal actual) {
@@ -46,6 +74,7 @@ class PricingServiceTest {
         assertMoney("2000", response.getTimeFare());       // 4 * 500
         assertMoney("24000", response.getTotalFare());
         assertEquals("VND", response.getCurrency());
+        assertNull(response.getRoutePoints());
     }
 
     @Test

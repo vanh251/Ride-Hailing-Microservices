@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Đi · Tài xế</title>
+  <meta name="description" content="Bật nhận chuyến, cập nhật vị trí và đưa hành khách đến nơi.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="./ride.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+</head>
+<body class="app">
+  <svg class="svg-defs" aria-hidden="true"><defs>
+    <symbol id="i-car" viewBox="0 0 24 24"><path d="m5 11 2-5.5h10L19 11M4 11h16v7H4zM7 18v2m10-2v2M7.5 14.5h1m7 0h1"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></symbol>
+    <symbol id="i-tap" viewBox="0 0 24 24"><path d="M12 21s-7-6-7-11a7 7 0 1 1 14 0c0 5-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+  </defs></svg>
+  <header class="topbar">
+    <a class="brand" href="driver.html"><span class="brand-mark">đi</span>Đi Tài xế</a>
+    <div class="topbar-right">
+      <div id="account"></div>
+      <button id="logout" class="btn ghost small"><svg class="icon"><use href="#i-logout"/></svg>Đăng xuất</button>
+    </div>
+  </header>
+  <main class="stage">
+    <div id="map" class="map" role="application" aria-label="Bản đồ vị trí tài xế và chuyến đi"></div>
+    <section class="sheet" aria-labelledby="driver-name">
+      <div class="profile">
+        <span id="avatar" class="avatar">Đ</span>
+        <div><strong id="driver-name">Tài xế</strong><small id="vehicle">Đang tải hồ sơ…</small></div>
+      </div>
+      <div class="switch">
+        <div><strong id="online-title">Ngoại tuyến</strong><small id="online-sub">Bật để bắt đầu nhận chuyến.</small></div>
+        <input id="online" class="toggle" type="checkbox" role="switch" aria-label="Nhận chuyến" disabled>
+      </div>
+      <p class="hint"><svg class="icon"><use href="#i-tap"/></svg><span id="location-hint">Chạm vào bản đồ để cập nhật vị trí của bạn.</span></p>
+
+      <div id="job" class="job" hidden>
+        <span id="job-pill" class="status-pill"></span>
+        <div class="sheet-section"><h1 id="job-title"></h1><p id="job-sub" class="muted"></p></div>
+        <dl id="job-facts" class="facts"></dl>
+        <div class="actions">
+          <button id="accept" class="btn primary">Nhận chuyến</button>
+          <button id="start" class="btn primary">Đã đón khách, bắt đầu</button>
+          <button id="complete" class="btn primary">Hoàn thành chuyến</button>
+        </div>
+      </div>
+      <p id="no-job" class="empty">Chưa có chuyến nào. Khi hệ thống ghép bạn với hành khách, chuyến sẽ hiện tại đây.</p>
+
+      <hr class="divider">
+      <div class="sheet-section">
+        <h2>Thông báo</h2>
+        <ul id="inbox" class="inbox"></ul>
+      </div>
+    </section>
+  </main>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script type="module">
+    import {$, esc, api, requireRole, renderAccount, toast, failure, makeMap, pinIcon} from './ride.mjs';
+    import {TERMINAL, unseen, assignedTripId, money, noteText} from './ride-core.mjs';
+    import {driverActions} from './client.mjs';
+
+    const session = requireRole('DRIVER');
+    if (session) main();
+
+    function main() {
+      renderAccount(session, 'Tài xế');
+      const me = session.userId;
+      const map = makeMap($('map'));
+      const JOB = {
+        ASSIGNED: ['Chuyến mới', 'Đến điểm đón hành khách', 'ok live'],
+        IN_PROGRESS: ['Đang chở khách', 'Đưa hành khách đến điểm đến', 'ok live'],
+        COMPLETED: ['Đã hoàn thành', 'Đang chờ hành khách thanh toán', 'warn live'],
+        PAID: ['Đã thanh toán', 'Chuyến đã kết thúc. Bạn có thể nhận chuyến tiếp theo.', 'ok'],
+        CANCELLED: ['Chuyến đã hủy', 'Hành khách hoặc hệ thống đã hủy chuyến.', 'bad'],
+        PAYMENT_FAILED: ['Thanh toán thất bại', 'Chuyến đã kết thúc nhưng chưa thu được tiền.', 'bad'],
+      };
+      const NOTE_KIND = {DriverAssignmentConfirmed: 'success', PaymentSucceeded: 'success', TripCancelled: 'warn'};
+      const STATUS = {AVAILABLE: ['Đang nhận chuyến', 'Hệ thống sẽ ghép bạn với hành khách gần nhất.'], OFFLINE: ['Ngoại tuyến', 'Bật để bắt đầu nhận chuyến.'],
+        RESERVED: ['Đang được ghép chuyến', 'Hệ thống đang xác nhận chuyến cho bạn.'], BUSY: ['Đang có chuyến', 'Hoàn thành chuyến để nhận chuyến mới.']};
+
+      let driver = null, trip = null, tripId = null, meMarker = null, line = null, located = false, primed = false, acting = false;
+      const accepted = new Set(), seen = new Set(), tripMarkers = {};
+      const road = {tripId: null, points: null};
+
+      function renderDriver() {
+        $('driver-name').textContent = driver.fullName || 'Tài xế';
+        $('avatar').textContent = (driver.fullName || 'Đ').trim().split(/\s+/).pop()[0].toUpperCase();
+        const v = driver.vehicle;
+        $('vehicle').textContent = v ? `${v.make} ${v.model} · ${v.color} · ${v.licensePlate}` : 'Chưa có thông tin xe';
+        const [title, sub] = STATUS[driver.status] || [driver.status, ''];
+        $('online-title').textContent = title;
+        $('online-sub').textContent = driver.location ? sub : 'Đặt vị trí trên bản đồ trước khi bật nhận chuyến.';
+        $('online').checked = ['AVAILABLE', 'RESERVED', 'BUSY'].includes(driver.status);
+        $('online').disabled = acting || ['RESERVED', 'BUSY'].includes(driver.status) || (!driver.location && driver.status === 'OFFLINE');
+        if (driver.location) {
+          const latlng = [driver.location.latitude, driver.location.longitude];
+          if (!meMarker) meMarker = L.marker(latlng, {icon: pinIcon('car'), keyboard: false, title: 'Vị trí của bạn'}).addTo(map);
+          else meMarker.setLatLng(latlng);
+          if (!located) { located = true; if (!trip) map.setView(latlng, 15); }
+        }
+      }
+
+      function renderJob() {
+        const show = Boolean(trip);
+        $('job').hidden = !show;
+        $('no-job').hidden = show;
+        for (const kind of ['pickup', 'destination']) { tripMarkers[kind]?.remove(); delete tripMarkers[kind]; }
+        line?.remove(); line = null;
+        if (!show) return;
+        const [title, sub, pill] = JOB[trip.status] || [trip.status, '', ''];
+        $('job-pill').className = `status-pill ${pill}`;
+        $('job-pill').textContent = TERMINAL.has(trip.status) ? 'Đã kết thúc' : 'Đang diễn ra';
+        $('job-title').textContent = title;
+        $('job-sub').textContent = sub;
+        $('job').classList.toggle('incoming', trip.status === 'ASSIGNED' && !accepted.has(trip.tripId));
+        $('job-facts').innerHTML = `
+          <div class="wide"><dt>Điểm đón</dt><dd>${esc(trip.pickup?.address)}</dd></div>
+          <div class="wide"><dt>Điểm đến</dt><dd>${esc(trip.destination?.address)}</dd></div>
+          <div><dt>${trip.finalFare != null ? 'Giá cuối cùng' : 'Giá ước tính'}</dt><dd>${money(trip.finalFare ?? trip.estimatedFare)}</dd></div>
+          <div><dt>Hành khách</dt><dd>Mã ${esc(String(trip.passengerId || '').slice(0, 8))}</dd></div>`;
+        const actions = driverActions(trip, me);
+        $('accept').hidden = !actions.includes('accept') || accepted.has(trip.tripId);
+        $('start').hidden = !actions.includes('start') || !accepted.has(trip.tripId);
+        $('complete').hidden = !actions.includes('complete');
+        for (const id of ['accept', 'start', 'complete']) $(id).disabled = acting;
+        const points = ['pickup', 'destination'].filter(kind => trip[kind]).map(kind => {
+          tripMarkers[kind] = L.marker([trip[kind].latitude, trip[kind].longitude], {icon: pinIcon(kind), keyboard: false}).addTo(map);
+          return [trip[kind].latitude, trip[kind].longitude];
+        });
+        if (points.length === 2 && road.tripId !== trip.tripId) {
+          road.tripId = trip.tripId; road.points = null;
+          const asked = trip.tripId;
+          api('/api/pricing/quote', {method: 'POST', body: {pickup: trip.pickup, destination: trip.destination}}, session)
+            .then(result => { if (road.tripId === asked) { road.points = result.routePoints; renderJob(); } }).catch(() => {});
+        }
+        // The road from Pricing when known, else a dotted straight line
+        if (points.length === 2) line = road.points
+          ? L.polyline(road.points, {color: '#0a8f4f', weight: 6, opacity: .9, lineCap: 'round', lineJoin: 'round'}).addTo(map)
+          : L.polyline(points, {color: '#0a8f4f', weight: 5, opacity: .85, dashArray: '2 10', lineCap: 'round'}).addTo(map);
+      }
+
+      function renderInbox(list) {
+        $('inbox').innerHTML = list.length ? list.slice(0, 20).map(n => `<li><svg class="icon"><use href="#i-bell"/></svg><div><strong>${esc(noteText(n)[0])}</strong>${esc(noteText(n)[1])}</div><time>${new Date(n.timestamp).toLocaleTimeString('vi-VN', {hour: '2-digit', minute: '2-digit'})}</time></li>`).join('') : '<li class="empty">Chưa có thông báo.</li>';
+        for (const note of unseen(list, seen)) {
+          seen.add(note.id);
+          if (primed) toast(...noteText(note), NOTE_KIND[note.eventType] || 'info');
+        }
+        primed = true;
+      }
+
+      async function act(label, work) {
+        acting = true; renderJob(); if (driver) renderDriver();
+        try { await work(); }
+        catch (error) { failure(error); }
+        finally { acting = false; await poll(); }
+      }
+
+      map.on('click', event => act('location', async () => {
+        await api(`/api/drivers/${me}/location`, {method: 'PATCH', body: {latitude: event.latlng.lat, longitude: event.latlng.lng}}, session);
+        toast('Đã cập nhật vị trí', `${event.latlng.lat.toFixed(4)}, ${event.latlng.lng.toFixed(4)}`, 'success');
+      }));
+
+      $('online').onchange = () => act('status', async () => {
+        const status = $('online').checked ? 'AVAILABLE' : 'OFFLINE';
+        await api(`/api/drivers/${me}/status`, {method: 'PATCH', body: {status}}, session);
+        toast(status === 'AVAILABLE' ? 'Bạn đang nhận chuyến' : 'Bạn đã ngoại tuyến', status === 'AVAILABLE' ? 'Chuyến mới sẽ hiện trong bảng bên trái.' : 'Bạn sẽ không được ghép chuyến mới.', status === 'AVAILABLE' ? 'success' : 'info');
+      });
+
+      $('accept').onclick = () => act('accept', async () => {
+        trip = await api(`/api/trips/${tripId}/accept`, {method: 'POST'}, session);
+        accepted.add(tripId);
+        toast('Đã nhận chuyến', 'Hãy đến điểm đón hành khách.', 'success');
+        map.panTo([trip.pickup.latitude, trip.pickup.longitude]);
+      });
+      $('start').onclick = () => act('start', async () => {
+        trip = await api(`/api/trips/${tripId}/start`, {method: 'POST'}, session);
+        toast('Chuyến đã bắt đầu', 'Đưa hành khách đến điểm đến an toàn.', 'success');
+      });
+      $('complete').onclick = () => act('complete', async () => {
+        trip = await api(`/api/trips/${tripId}/complete`, {method: 'POST'}, session);
+        toast('Đã hoàn thành chuyến', `Giá cuối cùng ${money(trip.finalFare)}. Đang chờ thanh toán.`, 'success');
+      });
+
+      let polling = false;
+      async function poll() {
+        if (polling) return;
+        polling = true;
+        try {
+          const [profile, notes] = await Promise.all([
+            api(`/api/drivers/${me}`, {}, session),
+            api(`/api/notifications/driver/${me}`, {}, session).catch(() => null),
+          ]);
+          driver = profile;
+          if (notes) {
+            renderInbox(notes);
+            const assigned = assignedTripId(notes);
+            if (assigned && assigned !== tripId) {
+              tripId = assigned;
+              const first = !trip;
+              trip = await api(`/api/trips/${tripId}`, {}, session);
+              if (!first || trip.status === 'ASSIGNED') map.fitBounds([[trip.pickup.latitude, trip.pickup.longitude], [trip.destination.latitude, trip.destination.longitude]], {paddingTopLeft: [innerWidth > 760 ? 440 : 40, 60], paddingBottomRight: [60, 60]});
+            }
+          }
+          if (tripId) {
+            const next = await api(`/api/trips/${tripId}`, {}, session);
+            // Paid and cancelled arrive as notifications, the other changes are the driver's own actions
+            if (trip && next.status !== trip.status && next.status === 'PAYMENT_FAILED') toast(JOB.PAYMENT_FAILED[0], JOB.PAYMENT_FAILED[1], 'error');
+            trip = next;
+          }
+          renderDriver(); renderJob();
+          poll.warned = false;
+        } catch (error) {
+          if (!poll.warned) { poll.warned = true; toast('Mất kết nối tạm thời', 'Ứng dụng sẽ tự thử lại.', 'warn'); }
+        } finally { polling = false; }
+      }
+      poll();
+      setInterval(poll, 3000);
+    }
+  </script>
+</body>
+</html>

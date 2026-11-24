@@ -1,23 +1,28 @@
 package com.example.pricingservice.service.impl;
 
+import com.example.pricingservice.client.RoutingClient;
 import com.example.pricingservice.dto.request.FinalFareRequest;
 import com.example.pricingservice.dto.request.LocationDto;
 import com.example.pricingservice.dto.request.QuoteRequest;
 import com.example.pricingservice.dto.response.FinalFareResponse;
 import com.example.pricingservice.dto.response.QuoteResponse;
 import com.example.pricingservice.service.PricingService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Optional;
 
 /**
  * Fare formula (docs/api.md §6): total = baseFare + distanceKm * distanceRate + durationMin * timeRate.
- * Money is computed with BigDecimal and rounded to whole VND.
+ * Money is computed with BigDecimal and rounded to whole VND. The quote's distance is the driving distance along
+ * the streets; the duration assumes average city traffic.
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class PricingServiceImpl implements PricingService {
 
     public static final BigDecimal BASE_FARE = new BigDecimal("15000");
@@ -25,10 +30,12 @@ public class PricingServiceImpl implements PricingService {
     public static final BigDecimal TIME_RATE_PER_MIN = new BigDecimal("500");
     public static final String CURRENCY = "VND";
     private static final double AVERAGE_CITY_SPEED_KMH = 20.0;
-    // Straight-line distance times this factor approximates the street route
+    // Fallback when the routing server cannot answer: straight-line distance times this factor approximates the streets
     private static final double ROUTE_DETOUR_FACTOR = 1.25;
     private static final double MIN_DISTANCE_KM = 0.5;
     private static final int EARTH_RADIUS_KM = 6371;
+
+    private final RoutingClient routingClient;
 
     @Override
     public QuoteResponse calculateQuote(QuoteRequest request) {
@@ -36,15 +43,17 @@ public class PricingServiceImpl implements PricingService {
                 request.getPickup().getLatitude(), request.getPickup().getLongitude(),
                 request.getDestination().getLatitude(), request.getDestination().getLongitude());
 
-        double distanceKm = estimateRouteDistanceKm(request.getPickup(), request.getDestination());
+        Optional<RoutingClient.Route> road = routingClient.drivingRoute(request.getPickup(), request.getDestination());
+        double distanceKm = road.map(route -> Math.max(MIN_DISTANCE_KM, roundOneDecimal(route.distanceKm())))
+                .orElseGet(() -> estimateRouteDistanceKm(request.getPickup(), request.getDestination()));
         int durationMin = estimateDurationMinutes(distanceKm);
 
         BigDecimal distanceFare = distanceFare(distanceKm);
         BigDecimal timeFare = timeFare(durationMin);
         BigDecimal totalFare = BASE_FARE.add(distanceFare).add(timeFare);
 
-        log.info("Quote calculated: distance={} km, duration={} min, totalFare={} {}",
-                distanceKm, durationMin, totalFare, CURRENCY);
+        log.info("Quote calculated: distance={} km ({}), duration={} min, totalFare={} {}",
+                distanceKm, road.isPresent() ? "road" : "straight-line estimate", durationMin, totalFare, CURRENCY);
 
         return QuoteResponse.builder()
                 .estimatedDistanceKm(distanceKm)
@@ -54,6 +63,7 @@ public class PricingServiceImpl implements PricingService {
                 .timeFare(timeFare)
                 .totalFare(totalFare)
                 .currency(CURRENCY)
+                .routePoints(road.map(RoutingClient.Route::points).orElse(null))
                 .build();
     }
 

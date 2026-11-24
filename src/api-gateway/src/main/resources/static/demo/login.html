@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Đi · Đăng nhập</title>
+  <meta name="description" content="Đăng nhập để đặt xe hoặc nhận chuyến trên Đi.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="./ride.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+</head>
+<body>
+  <svg class="svg-defs" aria-hidden="true"><defs>
+    <symbol id="i-car" viewBox="0 0 24 24"><path d="m5 11 2-5.5h10L19 11M4 11h16v7H4zM7 18v2m10-2v2M7.5 14.5h1m7 0h1"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  </defs></svg>
+  <div class="auth">
+    <section class="auth-visual">
+      <div id="map" class="map" aria-hidden="true"></div>
+      <div class="auth-copy">
+        <a class="brand" href="login.html" style="color:#fff"><span class="brand-mark">đi</span>Đi</a>
+        <h1>Gọi xe trong nội thành Hà Nội.</h1>
+        <p>Hành khách đặt chuyến và theo dõi tài xế trên bản đồ. Tài xế bật nhận chuyến và đưa khách đến nơi.</p>
+      </div>
+    </section>
+    <main class="auth-panel">
+      <div class="tabs" role="tablist" aria-label="Đăng nhập hoặc đăng ký">
+        <button id="tab-login" role="tab" aria-selected="true" aria-controls="login-form">Đăng nhập</button>
+        <button id="tab-register" role="tab" aria-selected="false" aria-controls="register-form">Tạo tài khoản</button>
+      </div>
+
+      <form id="login-form" class="form" role="tabpanel" aria-labelledby="tab-login">
+        <h1>Chào mừng trở lại</h1>
+        <label class="field">Email<input id="login-email" type="email" autocomplete="username" required></label>
+        <label class="field">Mật khẩu<input id="login-password" type="password" autocomplete="current-password" required minlength="8"></label>
+        <button class="btn primary block" type="submit">Đăng nhập</button>
+        <div class="demo-accounts">
+          Tài khoản demo có sẵn (mật khẩu Demo@12345):
+          <div>
+            <button class="chip" type="button" data-demo="passenger01@ds03.test">Hành khách 01</button>
+            <button class="chip" type="button" data-demo="driver01@ds03.test">Tài xế 01</button>
+          </div>
+        </div>
+      </form>
+
+      <form id="register-form" class="form" role="tabpanel" aria-labelledby="tab-register" hidden>
+        <h1>Tạo tài khoản mới</h1>
+        <div class="role-pick" role="radiogroup" aria-label="Vai trò">
+          <label><input type="radio" name="role" value="passenger" checked>Hành khách</label>
+          <label><input type="radio" name="role" value="driver">Tài xế</label>
+        </div>
+        <label class="field">Họ và tên<input id="reg-name" required maxlength="100" autocomplete="name"></label>
+        <label class="field">Email<input id="reg-email" type="email" required autocomplete="email"></label>
+        <label class="field">Mật khẩu (8 ký tự trở lên)<input id="reg-password" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>
+        <div id="driver-fields" class="form" hidden>
+          <label class="field">Số giấy phép lái xe (12 chữ số)<input id="reg-license" inputmode="numeric" pattern="[0-9]{12}" placeholder="012345678901"></label>
+          <div class="row">
+            <label class="field">Biển số xe<input id="reg-plate" placeholder="29A-12345"></label>
+            <label class="field">Loại xe<select id="reg-type"><option value="MOTORBIKE">Xe máy</option><option value="SEDAN" selected>Ô tô 4 chỗ</option><option value="SUV">Ô tô 7 chỗ</option><option value="VAN">Xe van</option></select></label>
+          </div>
+          <div class="row">
+            <label class="field">Hãng xe<input id="reg-make" placeholder="Toyota"></label>
+            <label class="field">Dòng xe<input id="reg-model" placeholder="Vios"></label>
+          </div>
+          <div class="row">
+            <label class="field">Màu xe<input id="reg-color" placeholder="Trắng"></label>
+            <label class="field">Năm sản xuất<input id="reg-year" type="number" min="1990" max="2030" value="2022"></label>
+          </div>
+        </div>
+        <button class="btn primary block" type="submit">Tạo tài khoản và đăng nhập</button>
+      </form>
+      <p class="auth-foot">Người điều hành hệ thống dùng <a href="index.html">Trung tâm demo</a>.</p>
+    </main>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script type="module">
+    import {$, api, saveSession, loadSession, goHome, toast, failure, makeMap} from './ride.mjs';
+    import {sessionFrom} from './ride-core.mjs';
+
+    const params = new URLSearchParams(location.search);
+    makeMap($('map'), [21.0285, 105.8542], 15, false);
+
+    // Already signed in for the role this link asks for: go straight to that page
+    const wanted = (params.get('role') || '').toUpperCase();
+    if (wanted && loadSession(wanted)) goHome(wanted);
+
+    function showTab(register) {
+      $('tab-login').setAttribute('aria-selected', String(!register));
+      $('tab-register').setAttribute('aria-selected', String(register));
+      $('login-form').hidden = register;
+      $('register-form').hidden = !register;
+    }
+    $('tab-login').onclick = () => showTab(false);
+    $('tab-register').onclick = () => showTab(true);
+    if (wanted === 'DRIVER') document.querySelector('input[value="driver"]').checked = true;
+
+    const isDriver = () => document.querySelector('input[name="role"]:checked').value === 'driver';
+    for (const radio of document.querySelectorAll('input[name="role"]')) radio.onchange = () => {
+      $('driver-fields').hidden = !isDriver();
+      for (const id of ['reg-license', 'reg-plate', 'reg-make', 'reg-model', 'reg-color']) $(id).required = isDriver();
+    };
+
+    for (const chip of document.querySelectorAll('[data-demo]')) chip.onclick = () => {
+      $('login-email').value = chip.dataset.demo;
+      $('login-password').value = 'Demo@12345';
+      $('login-password').focus();
+    };
+
+    async function signIn(email, password) {
+      const login = await api('/api/auth/login', {method: 'POST', body: {email, password}});
+      saveSession(sessionFrom(login, email));
+      toast('Đăng nhập thành công', login.role === 'DRIVER' ? 'Đang mở trang tài xế…' : 'Đang mở trang đặt xe…', 'success');
+      setTimeout(() => goHome(login.role), 400);
+    }
+
+    function busy(form, on) { for (const control of form.elements) control.disabled = on; }
+
+    $('login-form').onsubmit = async event => {
+      event.preventDefault();
+      busy(event.target, true);
+      try { await signIn($('login-email').value.trim(), $('login-password').value); }
+      catch (error) { failure(error.status === 401 ? {message: 'Email hoặc mật khẩu không đúng.'} : error); busy(event.target, false); }
+    };
+
+    $('register-form').onsubmit = async event => {
+      event.preventDefault();
+      const email = $('reg-email').value.trim(), password = $('reg-password').value;
+      const body = {fullName: $('reg-name').value.trim(), email, password};
+      if (isDriver()) Object.assign(body, {
+        licenseNumber: $('reg-license').value.trim(),
+        vehicle: {licensePlate: $('reg-plate').value.trim().toUpperCase(), make: $('reg-make').value.trim(), model: $('reg-model').value.trim(),
+          color: $('reg-color').value.trim(), year: Number($('reg-year').value), vehicleType: $('reg-type').value},
+      });
+      busy(event.target, true);
+      try {
+        await api(`/api/auth/register/${isDriver() ? 'driver' : 'passenger'}`, {method: 'POST', body});
+        await signIn(email, password);
+      } catch (error) { failure(error); busy(event.target, false); }
+    };
+  </script>
+</body>
+</html>

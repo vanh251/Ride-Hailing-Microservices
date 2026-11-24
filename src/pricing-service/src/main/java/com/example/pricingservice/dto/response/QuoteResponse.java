@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 @Data
 @Builder
@@ -35,4 +36,8 @@ public class QuoteResponse {
 
     @Schema(description = "Currency code", example = "VND")
     private String currency;
+
+    @Schema(description = "The driving route as [latitude, longitude] points for a map; null when the routing server "
+            + "was unavailable and the distance is the straight-line estimate", example = "[[21.0242, 105.8576], [21.0293, 105.8355]]")
+    private List<List<Double>> routePoints;
 }

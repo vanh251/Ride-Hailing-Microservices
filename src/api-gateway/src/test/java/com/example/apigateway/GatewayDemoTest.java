@@ -19,7 +19,8 @@ class GatewayDemoTest {
     int port;
 
     @ParameterizedTest
-    @ValueSource(strings = {"index.html", "styles.css", "app.js", "client.mjs"})
+    @ValueSource(strings = {"index.html", "client.mjs",
+            "login.html", "rider.html", "driver.html", "ride.css", "ride.mjs", "ride-core.mjs"})
     void demoAssetsAreAvailableWithoutAnApiToken(String asset) throws Exception {
         var response = get("/demo/" + asset);
         assertThat(response.statusCode()).isEqualTo(200);

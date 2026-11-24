@@ -3,78 +3,236 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Không gian demo hệ thống gọi xe phân tán: hành khách, tài xế và theo dõi phục hồi dịch vụ.">
-  <title>Đi · Ride Lab</title>
-  <link rel="stylesheet" href="./styles.css">
-  <script type="module" src="./app.js"></script>
+  <title>Đi · Kiểm thử đồng thời</title>
+  <meta name="description" content="Hai hành khách đặt cùng lúc khi chỉ có một tài xế: chỉ một chuyến được gán.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="./ride.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 </head>
-<body>
+<body class="app">
   <svg class="svg-defs" aria-hidden="true"><defs>
-    <symbol id="i-car" viewBox="0 0 24 24"><path d="m5 10 2-6h10l2 6M4 10h16v8H4zM7 18v2m10-2v2M7 14h1m8 0h1"/></symbol>
-    <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M4 22v-3a8 8 0 0 1 16 0v3"/></symbol>
-    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
-    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
-    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M2 12h5l3-8 4 16 3-8h5"/></symbol>
-    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7a9 9 0 1 0 1 9M20 2v6h-6"/></symbol>
-    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L20 5"/></symbol>
+    <symbol id="i-car" viewBox="0 0 24 24"><path d="m5 11 2-5.5h10L19 11M4 11h16v7H4zM7 18v2m10-2v2M7.5 14.5h1m7 0h1"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
   </defs></svg>
-  <a class="skip-link" href="#main">Đến nội dung chính</a>
-  <aside class="sidebar">
-    <a class="brand" href="#passenger"><span class="brand-mark">đi<span>·</span></span><span>Ride Lab<small>DISTRIBUTED SYSTEMS</small></span></a>
-    <div class="nav-label">KHÔNG GIAN DEMO</div>
-    <nav aria-label="Màn hình demo">
-      <a href="#passenger" data-view="passenger" class="nav-item active"><svg><use href="#i-person"/></svg>Hành khách<span>A / B</span></a>
-      <a href="#driver" data-view="driver" class="nav-item"><svg><use href="#i-car"/></svg>Tài xế</a>
-      <a href="#console" data-view="console" class="nav-item"><svg><use href="#i-grid"/></svg>Trung tâm demo<span>9</span></a>
-    </nav>
-    <div class="sidebar-bottom"><span class="lab-pill">DS03 · LOCAL LAB</span><p>Một chuyến đi.<br>Nhiều dịch vụ cùng vận hành.</p><div class="sidebar-tools"><a id="grafana-side" target="_blank" rel="noopener">Grafana</a><a id="prometheus-side" target="_blank" rel="noopener">Prometheus</a></div><small>Dừng / khởi động service<br>trong Docker Desktop.</small></div>
-  </aside>
-  <div class="workspace">
-    <header class="topbar"><div class="breadcrumb">Ride Lab <span>/</span> <span id="breadcrumb">Hành khách</span></div><div class="topbar-right"><span id="gateway-status" class="connection">Đang kết nối Gateway…</span><button id="refresh" class="icon-button" aria-label="Làm mới trạng thái"><svg><use href="#i-refresh"/></svg></button></div></header>
-    <main id="main">
-      <div class="page-heading"><div><div class="eyebrow">HỆ THỐNG GỌI XE PHÂN TÁN</div><h1 id="page-title">Chuyến đi tiếp theo của bạn.</h1><p id="page-subtitle">Đặt chuyến, quan sát matching và theo dõi thanh toán trên cùng một hành trình.</p></div><button id="prepare" class="button primary"><span>＋</span> Chuẩn bị demo mới</button></div>
-      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
-      <div class="summary-strip"><div><span class="metric-icon"><svg><use href="#i-person"/></svg></span><div><small>Phiên hành khách</small><strong id="session-count">0 / 2 sẵn sàng</strong></div></div><div><span class="metric-icon teal"><svg><use href="#i-car"/></svg></span><div><small>Tài xế demo</small><strong id="driver-summary">Chưa đăng nhập</strong></div></div><div><span class="metric-icon lavender"><svg><use href="#i-pulse"/></svg></span><div><small>Đồng bộ trạng thái</small><strong id="last-sync">Chưa có dữ liệu</strong></div></div></div>
+  <header class="topbar">
+    <a class="brand" href="index.html"><span class="brand-mark">đi</span>Đi · Kiểm thử đồng thời</a>
+    <div class="topbar-right"><a class="btn ghost small" href="login.html">Mở ứng dụng</a></div>
+  </header>
+  <main class="stage">
+    <div id="map" class="map" aria-label="Bản đồ vùng kiểm thử"></div>
+    <section class="sheet" aria-labelledby="title">
+      <div class="sheet-section">
+        <h1 id="title">Hai hành khách, một tài xế</h1>
+        <p class="muted">Hai hành khách đặt xe cùng lúc tại cùng điểm đón, trong vùng chỉ có một tài xế. Kết quả đúng: chỉ một chuyến được gán; chuyến kia tiếp tục tìm và tự hủy sau 60 giây.</p>
+      </div>
 
-      <section id="view-passenger" class="view">
-        <div class="two-column">
-          <div>
-            <section class="card booking-card"><div class="section-title"><h2>Bạn muốn đi đâu?</h2><span class="subtle">01 · ĐẶT CHUYẾN</span></div>
-              <div class="passenger-switch" role="group" aria-label="Chọn hành khách"><button data-passenger="a" class="selected">Hành khách A<span id="slot-a-state">Chưa đăng nhập</span></button><button data-passenger="b">Hành khách B<span id="slot-b-state">Chưa đăng nhập</span></button></div>
-              <div id="passenger-account" class="account-line"></div>
-              <div id="pending-booking" class="info-box error" role="status" hidden></div>
-              <form id="booking-form">
-                <div class="route-input"><span class="route-node pickup-node"></span><label for="pickup-address">Điểm đón<input id="pickup-address" name="pickup-address" value="Điểm đón demo" required maxlength="180"></label></div>
-                <div class="coordinate-row"><label>Vĩ độ<input id="pickup-lat" type="number" min="-90" max="90" step="any" required value="10.8"></label><label>Kinh độ<input id="pickup-lng" type="number" min="-180" max="180" step="any" required value="106.6"></label></div>
-                <div class="route-input destination"><span class="route-node destination-node"></span><label for="destination-address">Điểm đến<input id="destination-address" name="destination-address" value="Điểm đến demo" required maxlength="180"></label></div>
-                <div class="coordinate-row"><label>Vĩ độ<input id="destination-lat" type="number" min="-90" max="90" step="any" required value="10.82"></label><label>Kinh độ<input id="destination-lng" type="number" min="-180" max="180" step="any" required value="106.62"></label></div>
-                <div class="fare-row"><div><small>Giá cước ước tính</small><strong id="quote-amount">— <span>VND</span></strong></div><button id="quote" class="button secondary" type="button">Ước tính giá</button></div>
-                <button id="book" class="button primary full" type="submit"><svg><use href="#i-car"/></svg>Đặt chuyến</button>
-              </form>
-            </section>
-            <details class="card login-details"><summary>Đăng nhập tài khoản có sẵn</summary><form id="login-form" class="login-form"><label>Phiên đăng nhập<select id="login-slot"><option value="a">Hành khách A</option><option value="b">Hành khách B</option><option value="driver">Tài xế</option></select></label><label>Email<input id="login-email" type="email" autocomplete="username" required></label><label>Mật khẩu<input id="login-password" type="password" autocomplete="current-password" required></label><button class="button secondary" type="submit">Đăng nhập</button></form></details>
-            <details class="card login-details"><summary>Khôi phục theo dõi bằng Trip ID</summary><p class="muted">Dùng cho phiên hành khách đang chọn. Nếu lần đặt bị timeout, đối chiếu Correlation ID trong database để lấy Trip ID; giao diện không tự gửi lại yêu cầu.</p><form id="recover-form" class="login-form"><label>Trip ID<input id="recover-id" required pattern="[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" spellcheck="false"></label><button class="button secondary" type="submit">Khôi phục chuyến</button></form></details>
-          </div>
-          <div class="trip-column">
-            <section class="route-map" aria-label="Sơ đồ hành trình minh họa"><div class="map-caption"><span class="map-label"><svg><use href="#i-pin"/></svg>Hành trình của bạn</span><span>Sơ đồ minh họa · không định vị GPS</span></div><svg class="map-art" viewBox="0 0 700 290" aria-hidden="true"><defs><pattern id="blocks" width="92" height="73" patternTransform="rotate(-17)" patternUnits="userSpaceOnUse"><rect x="8" y="8" width="76" height="57" rx="8" fill="#e6ecf1"/><path d="M0 0h92v73H0Z" fill="none" stroke="#fff" stroke-width="9"/></pattern></defs><rect width="700" height="290" fill="#eef3f7"/><rect width="700" height="290" fill="url(#blocks)"/><path d="M-30 225c150-15 150-100 275-90s220 130 475-30" fill="none" stroke="#cce9e5" stroke-width="48"/><path d="M156 203V105h227v76h153" fill="none" stroke="white" stroke-width="16" stroke-linejoin="round"/><path d="M156 203V105h227v76h153" fill="none" stroke="#235ce2" stroke-width="7" stroke-linejoin="round"/><circle cx="156" cy="203" r="13" fill="#235ce2" stroke="white" stroke-width="5"/><circle cx="536" cy="181" r="13" fill="#0c9a88" stroke="white" stroke-width="5"/><rect x="118" y="233" width="88" height="27" rx="8" fill="white"/><text x="162" y="251" text-anchor="middle" fill="#344054" font-size="13">ĐIỂM ĐÓN</text><rect x="491" y="211" width="88" height="27" rx="8" fill="white"/><text x="535" y="229" text-anchor="middle" fill="#344054" font-size="13">ĐIỂM ĐẾN</text><g transform="translate(315 87)"><rect width="42" height="34" rx="10" fill="#12233f"/><path d="m10 15 4-6h14l4 6v10H10Z" fill="white"/><circle cx="16" cy="25" r="3" fill="#12233f"/><circle cx="27" cy="25" r="3" fill="#12233f"/></g></svg></section>
-            <section class="card"><div class="section-title"><h2>Chuyến đang theo dõi</h2><span id="trip-status" class="badge neutral">CHƯA CÓ CHUYẾN</span></div><div id="trip-detail" class="empty-state"><span class="empty-icon"><svg><use href="#i-car"/></svg></span><h3>Hành trình bắt đầu từ một yêu cầu.</h3><p>Chuẩn bị hồ sơ demo hoặc đăng nhập, sau đó chọn điểm đón và đặt chuyến.</p></div><div id="trip-progress" class="trip-progress" hidden></div><div class="trip-controls"><button id="cancel-trip" class="button danger" hidden>Hủy chuyến</button><button id="copy-trip" class="button quiet" hidden>Sao chép Trip ID</button></div><div id="payment-detail"></div></section>
-            <section class="card"><div class="section-title"><h2>Thông báo chuyến đi</h2><span class="subtle">NOTIFICATION SERVICE</span></div><div id="notifications" class="notification-list"><p class="muted">Thông báo của chuyến sẽ xuất hiện tại đây.</p></div></section>
-          </div>
-        </div>
-      </section>
+      <ol class="steps">
+        <li><button id="prepare" class="btn primary block">1. Chuẩn bị tài khoản và tài xế</button></li>
+        <li><button id="race" class="btn primary block" disabled>2. Gửi đồng thời A + B</button></li>
+        <li><button id="cleanup" class="btn ghost block" disabled>3. Dọn dẹp sau kiểm thử</button></li>
+      </ol>
 
-      <section id="view-driver" class="view" hidden>
-        <div class="two-column driver-layout"><section class="card"><div class="section-title"><h2>Trạm tài xế</h2><span id="driver-status" class="badge neutral">CHƯA ĐĂNG NHẬP</span></div><div class="driver-profile"><span class="avatar driver-avatar">D</span><div><h3 id="driver-name">Tài xế demo</h3><p id="driver-id" class="mono muted">Chưa có phiên tài xế</p></div></div><p class="muted">Vị trí được lấy từ điểm đón của biểu mẫu Hành khách. Cập nhật vị trí trước khi bật nhận chuyến.</p><button id="driver-location" class="button secondary full">Cập nhật vị trí gần điểm đón</button><div class="button-row"><button id="driver-available" class="button primary">Bật AVAILABLE</button><button id="driver-offline" class="button secondary">Chuyển OFFLINE</button></div><div class="info-box">Matching giữ tài xế theo lease và version. Chỉ sau xác nhận của Driver, chuyến mới chuyển sang ASSIGNED.</div></section><section class="card"><div class="section-title"><h2>Điều khiển chuyến</h2><svg class="heading-icon"><use href="#i-car"/></svg></div><label>Chọn chuyến demo<select id="driver-trip-slot"><option value="a">Chuyến hành khách A</option><option value="b">Chuyến hành khách B</option></select></label><div id="driver-trip-detail" class="empty-state compact"><p>Chưa có chuyến được gán cho tài xế này.</p></div><div class="driver-actions"><button id="driver-accept" class="button secondary">Nhận chuyến</button><button id="driver-start" class="button primary">Bắt đầu</button><button id="driver-complete" class="button primary">Hoàn thành chuyến</button></div><p class="small muted">“Nhận chuyến” xác nhận qua API; backend giữ trạng thái ASSIGNED cho đến khi “Bắt đầu”.</p></section></div>
-      </section>
+      <div id="verdict" class="verdict">Chưa chạy kiểm thử.</div>
 
-      <section id="view-console" class="view" hidden>
-        <div class="console-grid"><section class="card"><div class="section-title"><h2>Hai yêu cầu. Một tài xế.</h2><span class="badge neutral">CONCURRENCY</span></div><p class="muted">Dùng cùng điểm đón và hai phiên hành khách độc lập. Hệ thống kiểm tra chỉ có đúng một tài xế demo AVAILABLE trong vùng trước khi gửi.</p><div id="race-trips" class="race-trips"></div><button id="race" class="button primary full">Gửi đồng thời A + B</button><div id="race-result" class="info-box">Chuẩn bị demo, cập nhật vị trí và bật AVAILABLE trước khi chạy.</div><p class="small muted">Kết luận từ phản hồi API. Quyền sở hữu và version trong database cần đối chiếu bằng lệnh bên dưới.</p></section><section class="card operations"><div class="section-title"><h2>Điều hành & quan sát</h2><svg class="heading-icon"><use href="#i-pulse"/></svg></div><p class="muted">Thao tác service qua Docker Desktop hoặc copy lệnh chạy ở thư mục gốc dự án. Giao diện không điều khiển Docker.</p><label>Tiền tố lệnh Compose<input id="compose-prefix" value="docker compose" spellcheck="false"></label><div class="command-row"><code id="stop-command">docker compose stop payment-service</code><button class="button quiet" data-copy="stop">Copy</button></div><div class="command-row"><code id="start-command">docker compose start payment-service</code><button class="button quiet" data-copy="start">Copy</button></div><details><summary>Cấu hình liên kết giám sát</summary><label>Grafana URL<input id="grafana-url" type="url" value="http://localhost:3000"></label><label>Prometheus URL<input id="prometheus-url" type="url" value="http://localhost:9090"></label><button id="save-settings" class="button secondary">Lưu cấu hình</button></details><div class="button-row"><a id="grafana-link" class="button secondary" target="_blank" rel="noopener">Mở Grafana</a><a id="prometheus-link" class="button secondary" target="_blank" rel="noopener">Mở Prometheus</a></div></section></div>
-        <section class="card runbook"><div class="section-title"><div><h2>9 kịch bản trình diễn</h2><p class="muted">Thứ tự thao tác và bằng chứng cần quan sát.</p></div><span class="subtle">DEMO RUNBOOK</span></div><div id="scenario-list"></div></section>
-      </section>
+      <div class="race-grid">
+        <div class="race-card"><small>Hành khách A</small><strong id="trip-a">—</strong><span id="trip-a-id" class="mono"></span></div>
+        <div class="race-card"><small>Hành khách B</small><strong id="trip-b">—</strong><span id="trip-b-id" class="mono"></span></div>
+        <div class="race-card wide"><small>Tài xế kiểm thử</small><strong id="driver-state">—</strong><span id="driver-id" class="mono"></span></div>
+      </div>
 
-      <section class="card observation-card"><div class="section-title"><div><h2>Nhật ký quan sát</h2><p class="muted">Phản hồi HTTP và trạng thái đọc được từ API · không phải Kafka/Saga log.</p></div><button id="export-log" class="button quiet">Xuất nhật ký</button></div><div id="observation-log" class="observation-log" aria-live="off"><p class="muted">Chưa có thao tác. Mỗi hành trình sẽ có Trip ID và Correlation ID để đối chiếu.</p></div></section>
-      <footer><span>Đi · Ride Lab / DS03</span><span>API thật · Kafka bất đồng bộ · PostgreSQL riêng từng service</span><button id="clear-session" class="text-button">Xóa phiên trên trình duyệt</button></footer>
-    </main>
-  </div>
+      <div class="sheet-section">
+        <h2>Đối chiếu trong database</h2>
+        <div class="command"><code id="db-command">SELECT driver_id,status,reserved_for_trip,version FROM drivers WHERE status IN ('RESERVED','BUSY');</code><button id="copy" class="btn ghost small">Copy</button></div>
+        <p class="hint">Chạy trong driver_db: tài xế chỉ giữ đúng một chuyến.</p>
+      </div>
+
+      <div class="sheet-section">
+        <h2>Nhật ký</h2>
+        <ul id="log" class="log"><li class="empty">Chưa có thao tác.</li></ul>
+      </div>
+    </section>
+  </main>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script type="module">
+    import {request, bookPair, raceOutcome} from './client.mjs';
+    import {$, esc, toast, makeMap, pinIcon} from './ride.mjs';
+    import {sessionFrom, statusText} from './ride-core.mjs';
+
+    const PASSWORD = 'Demo@123456';
+    const map = makeMap($('map'), [12, 108], 6);
+    const layer = L.layerGroup().addTo(map);
+    let run = null, polling = null, busy = false;
+
+    function log(message, trace = '', error = false) {
+      if ($('log').querySelector('.empty')) $('log').innerHTML = '';
+      const item = document.createElement('li');
+      item.className = error ? 'error' : '';
+      item.innerHTML = `<time>${new Date().toLocaleTimeString('vi-VN')}</time><div>${esc(message)}${trace ? `<small class="mono">Correlation ${esc(trace)}</small>` : ''}</div>`;
+      $('log').prepend(item);
+    }
+
+    async function call(path, {method = 'GET', body, session} = {}) {
+      try {
+        const response = await request(path, {method, body, token: session?.accessToken});
+        if (method !== 'GET') log(`${method} ${path} · HTTP ${response.status}`, response.correlationId);
+        return response.data;
+      } catch (error) {
+        log(`${method} ${path} · ${error.message}`, error.correlationId || '', true);
+        throw error;
+      }
+    }
+
+    function controls() {
+      $('prepare').disabled = busy;
+      $('race').disabled = busy || !run || Boolean(run.trips.a || run.trips.b);
+      $('cleanup').disabled = busy || !run;
+    }
+
+    async function step(label, work) {
+      busy = true; controls();
+      try { await work(); }
+      catch (error) { toast(`${label} thất bại`, error.message, 'error'); }
+      finally { busy = false; controls(); }
+    }
+
+    // A test area away from the seeded Hanoi drivers and from earlier runs, so the test driver is the only one in range
+    function testArea() {
+      const cell = crypto.getRandomValues(new Uint32Array(1))[0] % 400;
+      return {lat: 11.5 + Math.floor(cell / 20) * .05, lng: 107.5 + (cell % 20) * .05};
+    }
+
+    async function account(slot, runId) {
+      const email = `race.${slot}.${runId}@ds03.test`;
+      const body = {fullName: slot === 'driver' ? 'Tài xế kiểm thử' : `Hành khách ${slot.toUpperCase()}`, email, password: PASSWORD};
+      if (slot === 'driver') Object.assign(body, {
+        licenseNumber: String(crypto.getRandomValues(new Uint32Array(1))[0]).padStart(12, '0'),
+        vehicle: {licensePlate: `51F-${String(crypto.getRandomValues(new Uint32Array(1))[0] % 100000).padStart(5, '0')}`, make: 'Toyota', model: 'Vios', color: 'Trắng', year: 2022, vehicleType: 'SEDAN'},
+      });
+      await call(`/api/auth/register/${slot === 'driver' ? 'driver' : 'passenger'}`, {method: 'POST', body});
+      return sessionFrom(await call('/api/auth/login', {method: 'POST', body: {email, password: PASSWORD}}), email);
+    }
+
+    $('prepare').onclick = () => step('Chuẩn bị', async () => {
+      stopPolling();
+      const runId = Date.now().toString(36);
+      const area = testArea();
+      const sessions = {};
+      for (const slot of ['a', 'b', 'driver']) sessions[slot] = await account(slot, runId);
+      const driverId = sessions.driver.userId;
+      const spot = {latitude: area.lat + .0003, longitude: area.lng + .0003};
+      await call(`/api/drivers/${driverId}/location`, {method: 'PATCH', body: spot, session: sessions.driver});
+      await call(`/api/drivers/${driverId}/status`, {method: 'PATCH', body: {status: 'AVAILABLE'}, session: sessions.driver});
+      const nearby = await call(`/api/drivers/available?latitude=${area.lat}&longitude=${area.lng}&radiusKm=5&size=50`);
+      if (!Array.isArray(nearby) || nearby.length !== 1 || nearby[0].id !== driverId)
+        throw new Error(`Vùng kiểm thử có ${nearby?.length ?? 0} tài xế sẵn sàng, cần đúng 1. Bấm Chuẩn bị lại.`);
+      run = {area, sessions, driverId, trips: {}, driver: null};
+      layer.clearLayers();
+      L.marker([area.lat, area.lng], {icon: pinIcon('pickup')}).addTo(layer);
+      L.marker([area.lat + .01, area.lng + .01], {icon: pinIcon('destination')}).addTo(layer);
+      L.marker([spot.latitude, spot.longitude], {icon: pinIcon('car')}).addTo(layer);
+      map.setView([area.lat + .004, area.lng + .004], 15);
+      $('verdict').className = 'verdict';
+      $('verdict').textContent = 'Sẵn sàng: vùng kiểm thử có đúng một tài xế AVAILABLE.';
+      render();
+      log(`Đã tạo hành khách A, B và tài xế ${driverId.slice(0, 8)} tại (${area.lat.toFixed(2)}, ${area.lng.toFixed(2)})`);
+      toast('Đã chuẩn bị xong', 'Một tài xế sẵn sàng, hai hành khách đã đăng nhập.', 'success');
+    });
+
+    $('race').onclick = () => step('Gửi đồng thời', async () => {
+      const {area, sessions} = run;
+      const payload = {
+        pickup: {address: 'Điểm đón kiểm thử', latitude: area.lat, longitude: area.lng},
+        destination: {address: 'Điểm đến kiểm thử', latitude: area.lat + .01, longitude: area.lng + .01},
+      };
+      const results = await bookPair(['a', 'b'], payload, (slot, body) => call('/api/trips', {method: 'POST', body, session: sessions[slot]}));
+      results.forEach((result, i) => { if (result.status === 'fulfilled') run.trips['ab'[i]] = result.value; });
+      if (results.some(r => r.status === 'rejected')) throw new Error('Một yêu cầu đặt xe thất bại, xem nhật ký.');
+      toast('Đã gửi hai yêu cầu cùng lúc', 'Đang chờ Matching và Driver xác nhận.', 'info');
+      startPolling();
+    });
+
+    $('cleanup').onclick = () => step('Dọn dẹp', async () => {
+      stopPolling();
+      const {sessions, driverId} = run;
+      for (const slot of ['a', 'b']) {
+        const trip = run.trips[slot];
+        if (trip && ['SEARCHING', 'ASSIGNING', 'ASSIGNED'].includes(trip.status))
+          await call(`/api/trips/${trip.tripId}/cancel`, {method: 'POST', body: {reason: 'Dọn dẹp kiểm thử đồng thời'}, session: sessions[slot]}).catch(() => {});
+      }
+      // The driver is released asynchronously by TripCancelled; wait for it before going offline
+      for (let i = 0; i < 20; i++) {
+        const driver = await call(`/api/drivers/${driverId}`, {session: sessions.driver});
+        if (['AVAILABLE', 'OFFLINE'].includes(driver.status)) break;
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      await call(`/api/drivers/${driverId}/status`, {method: 'PATCH', body: {status: 'OFFLINE'}, session: sessions.driver});
+      run = null; layer.clearLayers(); render();
+      $('verdict').className = 'verdict';
+      $('verdict').textContent = 'Đã dọn dẹp: hủy các chuyến còn mở và chuyển tài xế kiểm thử sang OFFLINE.';
+      toast('Đã dọn dẹp', 'Có thể chạy lần kiểm thử mới.', 'success');
+    });
+
+    $('copy').onclick = async () => {
+      try { await navigator.clipboard.writeText($('db-command').textContent); toast('Đã sao chép lệnh', '', 'success'); }
+      catch { toast('Không sao chép được', 'Hãy chọn và copy thủ công.', 'warn'); }
+    };
+
+    function stopPolling() { clearInterval(polling); polling = null; }
+
+    function startPolling() {
+      const started = Date.now();
+      let reported = null;
+      stopPolling();
+      polling = setInterval(async () => {
+        if (!run) return stopPolling();
+        try {
+          const [a, b, driver] = await Promise.all([
+            call(`/api/trips/${run.trips.a.tripId}`, {session: run.sessions.a}),
+            call(`/api/trips/${run.trips.b.tripId}`, {session: run.sessions.b}),
+            call(`/api/drivers/${run.driverId}`, {session: run.sessions.driver}),
+          ]);
+          for (const [slot, trip] of [['a', a], ['b', b]]) {
+            if (run.trips[slot].status !== trip.status) log(`Hành khách ${slot.toUpperCase()}: ${statusText(trip.status)}`, trip.correlationId);
+            run.trips[slot] = trip;
+          }
+          if (run.driver?.status !== driver.status) log(`Tài xế: ${driver.status}`);
+          run.driver = driver;
+          const outcome = raceOutcome([a, b], driver);
+          if (outcome !== reported && outcome !== 'waiting') {
+            reported = outcome;
+            if (outcome === 'exclusive') toast('Kiểm thử đạt', 'Chỉ một chuyến được gán tài xế.', 'success');
+            else toast('Phát hiện lỗi', 'Cùng một tài xế được gán cho cả hai chuyến.', 'error');
+          }
+          render(outcome);
+          // Keep watching until the losing trip has given up (CANCELLED after the 60 s search deadline)
+          if ((outcome === 'conflict') || [a, b].every(t => ['ASSIGNED', 'IN_PROGRESS', 'CANCELLED'].includes(t.status)) || Date.now() - started > 120000) stopPolling();
+        } catch { /* logged by call(); the next tick retries */ }
+      }, 1000);
+    }
+
+    function render(outcome = 'waiting') {
+      for (const slot of ['a', 'b']) {
+        const trip = run?.trips[slot];
+        $(`trip-${slot}`).textContent = trip ? `${statusText(trip.status)}${trip.driverId ? ' · có tài xế' : ''}` : '—';
+        $(`trip-${slot}-id`).textContent = trip ? trip.tripId : '';
+      }
+      $('driver-state').textContent = run ? (run.driver?.status || 'AVAILABLE') : '—';
+      $('driver-id').textContent = run?.driverId || '';
+      if (run?.trips.a) {
+        $('verdict').className = `verdict ${outcome === 'exclusive' ? 'ok' : outcome === 'conflict' ? 'bad' : ''}`;
+        $('verdict').textContent = outcome === 'exclusive'
+          ? 'ĐẠT: chỉ một chuyến được gán tài xế; chuyến còn lại chưa có tài xế. Đối chiếu database bên dưới.'
+          : outcome === 'conflict' ? 'LỖI: cùng một tài xế được gán cho cả hai chuyến.' : 'Đang chờ Matching và Driver xác nhận…';
+      }
+      controls();
+    }
+  </script>
 </body>
 </html>
