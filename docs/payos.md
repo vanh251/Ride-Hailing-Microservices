@@ -39,7 +39,7 @@ Sau đó build và khởi động lại `trip-service`, `payment-service`, `api-
 
 `PENDING` là đang chờ; `SUCCESS` là đã xác nhận tiền. Link `EXPIRED`/`CANCELLED` có thể tạo lại sau khi backend đối soát. `REVIEW_REQUIRED` cần xử lý đối soát, giao diện không đề nghị trả thêm. Giao dịch lặp không ghi ledger hoặc phát `PaymentSucceeded` hai lần.
 
-URL quay về và thao tác đóng/hủy trang thanh toán không xác nhận đã trả tiền hoặc xóa nợ. Nếu khách đã chuyển tiền nhưng chưa thấy kết quả, dùng **Kiểm tra thanh toán** và chờ đối soát; không chuyển tiền thêm. Backend có tác vụ truy vấn provider để phục hồi khi webhook thất lạc.
+URL quay về và thao tác đóng/hủy trang thanh toán không xác nhận đã trả tiền hoặc xóa nợ. Trang hành khách và tài xế tự đọc trạng thái thanh toán vài giây một lần; mỗi lần đọc, Payment Service hỏi lại payOS (tối đa 5 giây một lần), nên khoản đã chuyển hiện **Đã thanh toán** sau vài giây mà không cần webhook hay nút bấm. Không chuyển tiền thêm khi đang chờ. Tác vụ đối soát nền vẫn chạy 30 giây một lần và hỏi lại đơn đã hết hạn/hủy trong 24 giờ để bắt tiền chuyển muộn.
 
 Hoàn tiền thật và chuyển tiền cho tài xế chưa nằm trong bản này. API hoàn tiền giả lập phải từ chối khoản PAYOS để tránh ghi nhận hoàn tiền khi ngân hàng chưa hoàn.
 
