@@ -156,6 +156,22 @@ class PayosIntegrationTest {
         assertEquals("REVIEW_REQUIRED", checkout.checkout(partial, OWNER, "PASSENGER", false).status());
         assertEquals(captures, ledger.count());
     }
+    @Test void readingCheckoutConfirmsPaidQrWithoutAButton() {
+        UUID trip=UUID.randomUUID(); var created=checkout.checkout(trip, OWNER, "PASSENGER", true); paid=47500;
+        // Just checked: the page's next poll does not call payOS again yet
+        assertEquals("PENDING", checkout.checkout(trip, OWNER, "PASSENGER", false).status());
+        var attempt=attempts.findByPaymentIdOrderByOrderCodeDesc(created.paymentId()).get(0);
+        attempt.setLastCheckedAt(java.time.Instant.EPOCH); attempts.saveAndFlush(attempt);
+        assertEquals("SUCCESS", checkout.checkout(trip, DRIVER, "DRIVER", false).status());
+        assertEquals(1, creates.get());
+    }
+    @Test void longRetiredCheckoutsLeaveTheReconciliationBatch() {
+        UUID trip=UUID.randomUUID(); var created=checkout.checkout(trip, OWNER, "PASSENGER", true);
+        var attempt=attempts.findByPaymentIdOrderByOrderCodeDesc(created.paymentId()).get(0);
+        attempt.setState("EXPIRED"); attempt.setExpiresAt(java.time.Instant.now().minus(java.time.Duration.ofDays(2))); attempts.saveAndFlush(attempt);
+        var batch=attempts.reconciliationBatch(java.time.Instant.now().minus(java.time.Duration.ofDays(1)), org.springframework.data.domain.PageRequest.of(0,1000));
+        assertTrue(batch.stream().noneMatch(a -> a.getOrderCode().equals(attempt.getOrderCode())));
+    }
     @Test void cancelledLinkCanRenewButMoneyOnRetiredOrderRequiresReview() {
         UUID trip=UUID.randomUUID(); var first=checkout.checkout(trip,OWNER,"PASSENGER",true);
         var retired=attempts.findByPaymentIdOrderByOrderCodeDesc(first.paymentId()).get(0);

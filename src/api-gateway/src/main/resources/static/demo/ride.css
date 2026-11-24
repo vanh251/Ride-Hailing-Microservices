@@ -151,11 +151,6 @@ small, .muted { color: var(--muted); }
 .switch { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; border-radius: var(--radius); background: var(--ground); }
 .switch strong { display: block; }
 .switch small { font-size: 13px; }
-.toggle { appearance: none; width: 56px; height: 32px; border-radius: 99px; background: #c4cec8; position: relative; transition: background-color .2s; cursor: pointer; flex-shrink: 0; }
-.toggle::after { content: ""; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: #fff; box-shadow: 0 2px 4px rgb(0 0 0 / 20%); transition: transform .2s; }
-.toggle:checked { background: var(--green); }
-.toggle:checked::after { transform: translateX(24px); }
-.toggle:disabled { opacity: .5; cursor: not-allowed; }
 .job { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 14px; }
 .job.incoming { border: 2px solid var(--green); animation: glow 2.4s ease-in-out infinite; }
 @keyframes glow { 50% { box-shadow: 0 0 0 6px var(--green-soft); } }

@@ -69,8 +69,10 @@ public class PricingServiceImpl implements PricingService {
 
     @Override
     public FinalFareResponse calculateFinalFare(FinalFareRequest request) {
+        // One price per trip: the final fare is the quote again. Trip sends the quoted distance, and the duration is
+        // estimated from it exactly as in the quote, so the real ride time no longer changes what the passenger pays.
         double distanceKm = roundOneDecimal(request.getActualDistanceKm());
-        int durationMin = request.getActualDurationMin();
+        int durationMin = estimateDurationMinutes(distanceKm);
 
         BigDecimal distanceFare = distanceFare(distanceKm);
         BigDecimal timeFare = timeFare(durationMin);

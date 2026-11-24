@@ -23,6 +23,9 @@ import java.util.*;
 
 @Service
 public class PayosCheckoutService {
+    private static final java.time.Duration READ_RECHECK_INTERVAL=java.time.Duration.ofSeconds(5);
+    // Late money on an expired or cancelled checkout is still looked for, but only this long after it ended
+    private static final java.time.Duration RETIRED_RECONCILE_WINDOW=java.time.Duration.ofDays(1);
     private static final String CONFIG_MESSAGE="payOS checkout unavailable: configure PAYOS_CLIENT_ID, PAYOS_API_KEY, PAYOS_CHECKSUM_KEY and server return/cancel URLs";
     private final PaymentRepository payments;
     private final PayosAttemptRepository attempts;
@@ -60,7 +63,15 @@ public class PayosCheckoutService {
             if (create) throw error("Checkout is available only after trip completion",HttpStatus.CONFLICT,"TRIP_NOT_COMPLETED");
             return response(payment,latest(payment.getPaymentId()));
         }
-        if (!create) return response(payment,latest(payment.getPaymentId()));
+        if (!create) {
+            var last=latest(payment.getPaymentId());
+            // The pages poll this read: ask payOS (never create) at most every few seconds, so a paid QR shows as paid
+            // without any button and without waiting for the background reconciliation
+            if (payment.getStatus()==PaymentStatus.PENDING && config.configured() && last!=null && last.getPaymentLinkId()!=null
+                    && last.getLastCheckedAt().isBefore(Instant.now().minus(READ_RECHECK_INTERVAL)))
+                return process(payment.getPaymentId(),false).response();
+            return response(payment,last);
+        }
         sdk();
         // First transaction allocates and COMMITs the sequence order before any provider call.
         prepare(payment.getPaymentId(),false);
@@ -121,7 +132,7 @@ public class PayosCheckoutService {
             if (payment.getStatus()!=PaymentStatus.PENDING) return;
             var last=latest(paymentId);
             if (last==null || (renewConfirmedClosed && closed(last))) {
-                var attempt=new PayosAttempt(); attempt.setPaymentId(paymentId);
+                var attempt=new PayosAttempt(); attempt.setOrderCode(PayosAttempt.newOrderCode()); attempt.setPaymentId(paymentId);
                 attempts.saveAndFlush(attempt);
             }
         });
@@ -278,7 +289,7 @@ public class PayosCheckoutService {
     public void reconcile() {
         if (!config.configured()) return;
         // Bounded oldest-first polling also revisits retired attempts so late money is not lost.
-        for (var a:attempts.reconciliationBatch(PageRequest.of(0,20))) {
+        for (var a:attempts.reconciliationBatch(Instant.now().minus(RETIRED_RECONCILE_WINDOW),PageRequest.of(0,20))) {
             try { reconcileAttempt(a); } catch (Exception ignored) { /* Next bounded poll retries; never log provider secrets. */ }
         }
     }

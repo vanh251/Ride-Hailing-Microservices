@@ -888,7 +888,7 @@ total = baseFare + (distanceKm * distanceRate) + (durationMin * timeRate)
 
 ### POST /api/pricing/final
 
-Calculate final fare after trip completion (actual distance/duration).
+Price of a completed trip. A trip has one price: Trip sends the distance stored from the quote, and Pricing estimates the duration from it exactly as in the quote (20 km/h), so `totalFare` equals the `estimatedFare` the passenger saw when booking. The real ride time does not change the price; an `actualDurationMin` field in the request is accepted and ignored.
 
 **Auth required:** Yes (internal). Not routed by the gateway (`404`): Trip Service calls `http://pricing-service:8085` directly.
 
@@ -896,8 +896,7 @@ Calculate final fare after trip completion (actual distance/duration).
 ```json
 {
   "tripId": "550e8400-e29b-41d4-a716-446655440000",
-  "actualDistanceKm": 2.8,
-  "actualDurationMin": 15
+  "actualDistanceKm": 2.8
 }
 ```
 
@@ -907,8 +906,8 @@ Calculate final fare after trip completion (actual distance/duration).
   "tripId": "550e8400-e29b-41d4-a716-446655440000",
   "baseFare": 15000,
   "distanceFare": 14000,
-  "timeFare": 7500,
-  "totalFare": 36500,
+  "timeFare": 4000,
+  "totalFare": 33000,
   "currency": "VND"
 }
 ```

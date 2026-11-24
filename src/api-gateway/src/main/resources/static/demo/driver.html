@@ -40,9 +40,8 @@
         <span id="avatar" class="avatar">Đ</span>
         <div><strong id="driver-name">Tài xế</strong><small id="vehicle">Đang tải hồ sơ…</small></div>
       </div>
-      <div class="switch">
-        <div><strong id="online-title">Ngoại tuyến</strong><small id="online-sub">Bật để bắt đầu nhận chuyến.</small></div>
-        <input id="online" class="toggle" type="checkbox" role="switch" aria-label="Nhận chuyến" disabled>
+      <div class="switch" role="status">
+        <div><strong id="online-title">Đang tải trạng thái…</strong><small id="online-sub"></small></div>
       </div>
       <p class="hint"><svg class="icon"><use href="#i-tap"/></svg><span id="location-hint">Chạm vào bản đồ để cập nhật vị trí của bạn.</span></p>
       <details class="place-preview">
@@ -64,7 +63,6 @@
           <h2 id="payment-title">Chờ thanh toán</h2>
           <p id="payment-message" class="location-summary" role="status"></p>
           <button id="pay-checkout" class="btn primary block" type="button" hidden>Thanh toán payOS</button>
-          <button id="payment-refresh" class="btn ghost small" type="button">Kiểm tra thanh toán</button>
         </div>
         <div class="actions">
           <button id="accept" class="btn primary">Nhận chuyến</button>
@@ -84,7 +82,7 @@
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
   <script type="module">
-    import {$, esc, api, requireRole, renderAccount, toast, failure, makeMap, pinIcon, placeSearch, locateMe, focusPoint} from './ride.mjs';
+    import {$, esc, api, requireRole, renderAccount, logout, toast, failure, makeMap, pinIcon, placeSearch, locateMe, focusPoint} from './ride.mjs';
     import {distanceKm} from './geo.mjs';
     import {paymentPanel} from './payment.mjs';
     import {TERMINAL, unseen, assignedTripId, money, noteText} from './ride-core.mjs';
@@ -107,11 +105,15 @@
         PAYMENT_FAILED: ['Thanh toán thất bại', 'Chuyến đã kết thúc nhưng chưa thu được tiền.', 'bad'],
       };
       const NOTE_KIND = {DriverAssignmentConfirmed: 'success', PaymentSucceeded: 'success', TripCancelled: 'warn'};
-      const STATUS = {AVAILABLE: ['Đang nhận chuyến', 'Hệ thống sẽ ghép bạn với hành khách gần nhất.'], OFFLINE: ['Ngoại tuyến', 'Bật để bắt đầu nhận chuyến.'],
+      const STATUS = {AVAILABLE: ['Đang nhận chuyến', 'Hệ thống sẽ ghép bạn với hành khách gần nhất.'], OFFLINE: ['Ngoại tuyến', 'Đặt vị trí trên bản đồ để bắt đầu nhận chuyến.'],
         RESERVED: ['Đang được ghép chuyến', 'Hệ thống đang xác nhận chuyến cho bạn.'], BUSY: ['Đang có chuyến', 'Hoàn thành chuyến để nhận chuyến mới.']};
 
       let driver = null, trip = null, tripId = null, meMarker = null, line = null, located = false, primed = false, acting = false;
-      const accepted = new Set(), seen = new Set(), tripMarkers = {};
+      // Remembered for the tab so a reload after "Nhận chuyến" shows the next step, not the same button again
+      const acceptedKey = `di-accepted-${me}`;
+      let saved = [];
+      try { saved = JSON.parse(sessionStorage.getItem(acceptedKey) || '[]'); } catch { /* storage blocked */ }
+      const accepted = new Set(saved), seen = new Set(), tripMarkers = {};
       const road = {tripId: null, points: null};
       const preview = {}, searches = {};
       for (const kind of ['pickup', 'destination']) searches[kind] = placeSearch(kind, map, point => {
@@ -127,7 +129,7 @@
         const {latitude, longitude} = position.coords;
         await api(`/api/drivers/${me}/location`, {method: 'PATCH', body: {latitude, longitude}}, session);
         // Apply the acknowledged report immediately; profile polling may already be in flight.
-        if (driver) { driver.location = {latitude, longitude}; renderDriver(); }
+        if (driver) { driver.location = {latitude, longitude}; renderDriver(); await goOnline(); }
         focusPoint(map, [latitude, longitude], 16);
         toast('Đã cập nhật vị trí GPS', 'Vị trí này được dùng để hệ thống tự ghép chuyến.', 'success');
       });
@@ -139,9 +141,7 @@
         $('vehicle').textContent = v ? `${v.make} ${v.model} · ${v.color} · ${v.licensePlate}` : 'Chưa có thông tin xe';
         const [title, sub] = STATUS[driver.status] || [driver.status, ''];
         $('online-title').textContent = title;
-        $('online-sub').textContent = driver.location ? sub : 'Đặt vị trí trên bản đồ trước khi bật nhận chuyến.';
-        $('online').checked = ['AVAILABLE', 'RESERVED', 'BUSY'].includes(driver.status);
-        $('online').disabled = acting || ['RESERVED', 'BUSY'].includes(driver.status) || (!driver.location && driver.status === 'OFFLINE');
+        $('online-sub').textContent = driver.location ? sub : 'Đặt vị trí trên bản đồ để bắt đầu nhận chuyến.';
         if (driver.location) {
           const latlng = [driver.location.latitude, driver.location.longitude];
           if (!meMarker) meMarker = L.marker(latlng, {icon: pinIcon('car'), keyboard: false, title: 'Vị trí của bạn'}).addTo(map);
@@ -174,7 +174,7 @@
         $('job-facts').innerHTML = `
           <div class="wide"><dt>Điểm đón</dt><dd>${esc(trip.pickup?.address)}</dd></div>
           <div class="wide"><dt>Điểm đến</dt><dd>${esc(trip.destination?.address)}</dd></div>
-          <div><dt>${trip.finalFare != null ? 'Giá cuối cùng' : 'Giá ước tính'}</dt><dd>${money(trip.finalFare ?? trip.estimatedFare)}</dd></div>
+          <div><dt>Giá chuyến đi</dt><dd>${money(trip.finalFare ?? trip.estimatedFare)}</dd></div>
           <div><dt>Hành khách</dt><dd>Mã ${esc(String(trip.passengerId || '').slice(0, 8))}</dd></div>`;
         const actions = driverActions(trip, me);
         $('accept').hidden = !actions.includes('accept') || accepted.has(trip.tripId);
@@ -215,20 +215,29 @@
         finally { acting = false; await poll(); }
       }
 
+      // No switch: an open driver page with a known location takes trips, and signing out stops it
+      async function goOnline() {
+        if (driver?.status !== 'OFFLINE' || !driver.location) return;
+        await api(`/api/drivers/${me}/status`, {method: 'PATCH', body: {status: 'AVAILABLE'}}, session);
+        driver.status = 'AVAILABLE'; renderDriver();
+        toast('Bạn đang nhận chuyến', 'Chuyến mới sẽ hiện trong bảng bên trái.', 'success');
+      }
+      $('logout').onclick = async () => {
+        if (driver?.status === 'AVAILABLE')
+          await api(`/api/drivers/${me}/status`, {method: 'PATCH', body: {status: 'OFFLINE'}}, session).catch(() => {});
+        logout('DRIVER');
+      };
+
       map.on('click', event => act('location', async () => {
         await api(`/api/drivers/${me}/location`, {method: 'PATCH', body: {latitude: event.latlng.lat, longitude: event.latlng.lng}}, session);
         toast('Đã cập nhật vị trí', `${event.latlng.lat.toFixed(4)}, ${event.latlng.lng.toFixed(4)}`, 'success');
+        if (driver) { driver.location = {latitude: event.latlng.lat, longitude: event.latlng.lng}; await goOnline(); }
       }));
-
-      $('online').onchange = () => act('status', async () => {
-        const status = $('online').checked ? 'AVAILABLE' : 'OFFLINE';
-        await api(`/api/drivers/${me}/status`, {method: 'PATCH', body: {status}}, session);
-        toast(status === 'AVAILABLE' ? 'Bạn đang nhận chuyến' : 'Bạn đã ngoại tuyến', status === 'AVAILABLE' ? 'Chuyến mới sẽ hiện trong bảng bên trái.' : 'Bạn sẽ không được ghép chuyến mới.', status === 'AVAILABLE' ? 'success' : 'info');
-      });
 
       $('accept').onclick = () => act('accept', async () => {
         trip = await api(`/api/trips/${tripId}/accept`, {method: 'POST'}, session);
         accepted.add(tripId);
+        try { sessionStorage.setItem(acceptedKey, JSON.stringify([...accepted].slice(-20))); } catch { /* storage blocked */ }
         toast('Đã nhận chuyến', 'Hãy đến điểm đón hành khách.', 'success');
         map.panTo([trip.pickup.latitude, trip.pickup.longitude]);
       });
@@ -238,7 +247,7 @@
       });
       $('complete').onclick = () => act('complete', async () => {
         trip = await api(`/api/trips/${tripId}/complete`, {method: 'POST'}, session);
-        toast('Đã hoàn thành chuyến', `Giá cuối cùng ${money(trip.finalFare)}. Đang chờ thanh toán.`, 'success');
+        toast('Đã hoàn thành chuyến', `Giá chuyến đi ${money(trip.finalFare)}. Đang chờ thanh toán.`, 'success');
       });
 
       let polling = false;
@@ -251,6 +260,8 @@
             api(`/api/notifications/driver/${me}`, {}, session).catch(() => null),
           ]);
           driver = profile;
+          // Opening the page goes online once (a sign-out set OFFLINE); never fight a later status change
+          if (!poll.opened) { poll.opened = true; await goOnline().catch(failure); }
           if (notes) {
             renderInbox(notes);
             const assigned = assignedTripId(notes);

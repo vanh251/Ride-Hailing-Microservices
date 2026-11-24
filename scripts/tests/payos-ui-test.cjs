@@ -57,8 +57,8 @@ async (page) => {
 
     // A pending read that began before checkout succeeds must not undo success.
     failCreate=false; delayRead=true;
-    const heldRead=page.waitForRequest(`**/api/payments/${tripId}/checkout`);
-    await page.locator('#payment-refresh').click();
+    // The page's own polling issues the next read; no button is needed
+    const heldRead=page.waitForRequest(request=>request.url().endsWith(`/api/payments/${tripId}/checkout`) && request.method()==='GET');
     await heldRead;
     await page.locator('#pay-checkout').click();
     await page.waitForFunction(()=>document.querySelector('#payment-title').textContent==='Đã thanh toán');
@@ -80,7 +80,6 @@ async (page) => {
     check(await page.locator('#pay-checkout').isHidden(),'Driver cannot initiate customer checkout');
     const postsBefore=posts;
     paymentStatus='SUCCESS';
-    await page.locator('#payment-refresh').click();
     await page.waitForFunction(()=>document.querySelector('#payment-title').textContent==='Đã thanh toán');
     check(posts===postsBefore,'Driver only reads status');
     return {passed:true,posts,checked:['post-trip only','missing config','ignore forged return status','stale read isolation','hosted checkout redirect','driver read-only payment state']};
