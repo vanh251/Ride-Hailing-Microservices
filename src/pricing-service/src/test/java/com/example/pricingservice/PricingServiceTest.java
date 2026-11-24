@@ -92,12 +92,11 @@ class PricingServiceTest {
     }
 
     @Test
-    @DisplayName("calculateFinalFare with valid input returns the docs/api.md example fare")
+    @DisplayName("calculateFinalFare returns the docs/api.md example fare: 2.8 km at 20 km/h = 8 min")
     void calculateFinalFare_validRequest_returnsAccurateFinalFare() {
         FinalFareRequest request = FinalFareRequest.builder()
                 .tripId("trip-001")
                 .actualDistanceKm(2.8)
-                .actualDurationMin(15)
                 .build();
 
         FinalFareResponse response = pricingService.calculateFinalFare(request);
@@ -105,9 +104,23 @@ class PricingServiceTest {
         assertEquals("trip-001", response.getTripId());
         assertMoney("15000", response.getBaseFare());
         assertMoney("14000", response.getDistanceFare()); // 2.8 * 5000
-        assertMoney("7500", response.getTimeFare());      // 15 * 500
-        assertMoney("36500", response.getTotalFare());
+        assertMoney("4000", response.getTimeFare());      // 8 * 500
+        assertMoney("33000", response.getTotalFare());
         assertEquals("VND", response.getCurrency());
+    }
+
+    @Test
+    @DisplayName("calculateFinalFare charges exactly the quoted price, whatever the distance")
+    void calculateFinalFare_quotedDistance_equalsQuote() {
+        for (double[] trip : new double[][]{{21.0242, 105.8576, 21.0293, 105.8355}, {21.0285, 105.8542, 21.0598, 105.8195}, {21.0, 105.0, 21.0, 105.0}}) {
+            QuoteResponse quote = pricingService.calculateQuote(QuoteRequest.builder()
+                    .pickup(new LocationDto(trip[0], trip[1], "A")).destination(new LocationDto(trip[2], trip[3], "B")).build());
+
+            FinalFareResponse fare = pricingService.calculateFinalFare(FinalFareRequest.builder()
+                    .tripId("trip").actualDistanceKm(quote.getEstimatedDistanceKm()).build());
+
+            assertMoney(quote.getTotalFare().toPlainString(), fare.getTotalFare());
+        }
     }
 
     @Test
@@ -116,7 +129,6 @@ class PricingServiceTest {
         FinalFareResponse response = pricingService.calculateFinalFare(FinalFareRequest.builder()
                 .tripId("trip-002")
                 .actualDistanceKm(0.3)
-                .actualDurationMin(1)
                 .build());
 
         assertEquals(new BigDecimal("1500"), response.getDistanceFare());
