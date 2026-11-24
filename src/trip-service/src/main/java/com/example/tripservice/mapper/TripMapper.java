@@ -34,6 +34,8 @@ public class TripMapper {
                 .destination(destination)
                 .estimatedFare(trip.getEstimatedFare())
                 .finalFare(trip.getFinalFare())
+                .paymentProvider(trip.getPaymentProvider())
+                .currency(trip.getCurrency())
                 .correlationId(trip.getCorrelationId())
                 .createdAt(trip.getCreatedAt())
                 .updatedAt(trip.getUpdatedAt())

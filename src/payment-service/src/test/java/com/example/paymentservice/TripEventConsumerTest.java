@@ -80,6 +80,17 @@ class TripEventConsumerTest {
     }
 
     @Test
+    void payosTripCompletedNeverUsesTheSimulator() {
+        String payload = """
+                {"tripId":"%s","passengerId":"%s","finalFare":47500,"currency":"VND","paymentProvider":"PAYOS"}
+                """.formatted(TRIP_ID, PASSENGER_ID);
+        consumer.consumeTripEvent(record(tripCompleted(payload)), acknowledgment);
+        verify(paymentService).processPayosTripCompleted(UUID.fromString(TRIP_ID));
+        verifyNoMoreInteractions(paymentService);
+        verify(acknowledgment).acknowledge();
+    }
+
+    @Test
     @DisplayName("consumeTripEvent without passengerId throws ValidationException instead of charging an empty passenger")
     void consumeTripEvent_missingPassengerId_throwsValidationException() {
         String payload = "{\"tripId\": \"%s\", \"finalFare\": 47500}".formatted(TRIP_ID);

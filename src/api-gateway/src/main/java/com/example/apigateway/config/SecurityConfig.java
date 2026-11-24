@@ -45,6 +45,9 @@ public class SecurityConfig {
                     "/api/auth/register/driver",
                     "/api/auth/login"
                 ).permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/payments/webhooks/payos").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/payments/*/checkout").hasRole("PASSENGER")
+                .requestMatchers(HttpMethod.GET, "/api/payments/*/checkout").hasAnyRole("PASSENGER", "DRIVER")
                 // Public for now: see GET /api/drivers/available in docs/api.md
                 .requestMatchers(HttpMethod.GET, "/api/drivers/available").permitAll()
                 // Service-to-service paths have no route, so letting them through ends in the gateway's 404 (docs/api.md §10)

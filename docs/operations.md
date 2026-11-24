@@ -19,7 +19,8 @@ services share that cache and build their jars one after another.
 ## 2. Monitoring
 
 - Prometheus: <http://localhost:9090/targets> scrapes `/actuator/prometheus` of all 8 services every 15s.
-- Grafana: <http://localhost:3000>, user and password from `.env`. The dashboard **DS03 Services** is
+- Grafana: <http://localhost:3000>, initial user/password from `.env` on first boot. An existing Grafana
+  volume retains its previously configured login; changing `.env` does not reset it. The dashboard **DS03 Services** is
   loaded automatically from `deploy/monitoring/grafana/provisioning/dashboards/`.
 
 | Panel | Shows |
@@ -30,6 +31,69 @@ services share that cache and build their jars one after another.
 | Kafka consumer lag | records a consumer still has to read; grows while a consumer is down |
 | Kafka records consumed per second | queue processing speed per consumer |
 | CPU usage, JVM heap used | per service |
+
+## 2.1. Centralized logs in Grafana
+
+**Docker stdout/stderr → Grafana Alloy → Loki → Grafana.** The **[DS03 Logs](http://localhost:3000/d/ds03-logs)**
+dashboard and datasource **Loki** are provisioned automatically. Prometheus remains the default metrics datasource.
+
+For an existing running stack, enable logging without rebuilding/restarting application services:
+
+```powershell
+docker compose up -d --no-deps loki alloy
+docker compose restart grafana
+```
+
+For a new stack, `scripts/start.sh` includes the logging services. Allow a short startup/ingestion delay.
+Open **DS03 Logs** or **Explore → Loki**, choose a time range, and filter by **Project**, **Service**, **Level**
+and **Text / Correlation ID**. Expand a log entry to view its labels and Java stack trace. The volume panel and
+log panel follow all four filters; the error count always counts ERROR/FATAL for the project/service/text filters.
+
+Example LogQL queries in Explore:
+
+```logql
+{compose_project="ds-project", service_name="trip-service"}
+{compose_project="ds-project", service_name=~"trip-service|matching-service|driver-service"} |= "your-correlation-id"
+{compose_project="ds-project", level="ERROR"}
+```
+
+Paste a Correlation ID from the web demo into **Text / Correlation ID** to follow the same flow across services.
+IDs remain log content rather than indexed labels. Kafka/database entries may not have a Level label; select
+**Level = All** to include them. Collector processing strips ANSI colors and combines Java stack traces into
+one entry (up to 256 lines).
+
+Collection includes all eight application services, Kafka and five databases in the **same Compose project**.
+`docker compose -p other-name ...` sets Alloy's project filter automatically. Monitoring containers and other
+projects are excluded. No Loki or Alloy port is published to the host; Grafana connects over Docker DNS.
+Alloy uses the Linux Docker socket, which also works inside Docker Desktop's Linux engine. That socket grants
+Docker API access even with a read-only bind mount; keep this collector local to the trusted demo host.
+
+Loki stores data in `loki_data`, retains collected logs for **168 hours (7 days)** and removes expired chunks
+asynchronously through its compactor. Alloy keeps read positions in `alloy_data`. Normal container restart or
+`docker compose down` preserves these named volumes; `down -v` deletes them. Retention is independent of Docker's
+own container-log rotation. Old Docker history is not a guaranteed backfill: on initial collection, Loki may
+reject entries outside its out-of-order window; newly emitted logs are collected normally.
+
+Validation:
+
+```powershell
+docker compose config -q
+docker compose run --rm --no-deps loki '-config.file=/etc/loki/loki.yml' '-verify-config'
+docker compose run --rm --no-deps alloy validate /etc/alloy/config.alloy
+python scripts/tests/logging-smoke.py
+```
+
+The smoke test creates a disposable passenger/cancelled trip plus temporary log-only probe containers. It
+verifies actual provisioning, correlated service logs, severity/multiline handling, project exclusion, dashboard
+queries and delivery after collector restart. By default it reads back the provisioned Grafana database and
+queries Loki from the Grafana container, preserving existing credentials. To verify through Grafana's authenticated
+API instead, set `LOGGING_GRAFANA_USER` / `LOGGING_GRAFANA_PASSWORD` in the process environment; credentials are
+never printed, and an authentication failure stops immediately. `LOGGING_GRAFANA_URL`, `LOGGING_GATEWAY_URL`,
+`LOGGING_GRAFANA_CONTAINER` and `LOGGING_ALLOY_CONTAINER` support a separate local test stack.
+
+Configuration: `deploy/monitoring/loki/loki.yml`, `deploy/monitoring/alloy/config.alloy`, and Grafana's provisioning
+directory. References: [Grafana Docker log collection](https://grafana.com/docs/alloy/latest/monitor/monitor-docker-containers/)
+and [Loki retention](https://grafana.com/docs/loki/latest/operations/storage/retention/).
 
 ## 3. Retry, DLQ and message recovery
 

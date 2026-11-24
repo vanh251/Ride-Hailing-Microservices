@@ -1,0 +1,41 @@
+{
+  "uid": "ds03-logs",
+  "title": "DS03 Logs",
+  "description": "Centralized Docker logs collected by Alloy. Filter by project/service/level or search a Correlation ID. Kafka/DB logs may not have a level label.",
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": ["ds03", "logs"],
+  "refresh": "5s",
+  "time": {"from": "now-15m", "to": "now"},
+  "templating": {
+    "list": [
+      {"name": "project", "label": "Project", "type": "query", "datasource": {"type": "loki", "uid": "loki"}, "query": "label_values(compose_project)", "refresh": 1, "includeAll": true, "allValue": ".+", "multi": true, "current": {"text": "All", "value": "$__all"}},
+      {"name": "service", "label": "Service", "type": "query", "datasource": {"type": "loki", "uid": "loki"}, "query": "label_values({compose_project=~\"$project\"}, service_name)", "refresh": 1, "includeAll": true, "allValue": ".+", "multi": true, "current": {"text": "All", "value": "$__all"}},
+      {"name": "level", "label": "Level", "type": "custom", "query": "TRACE,DEBUG,INFO,WARN,ERROR,FATAL", "includeAll": true, "allValue": ".*", "multi": true, "current": {"text": "All", "value": "$__all"}},
+      {"name": "search", "label": "Text / Correlation ID", "type": "textbox", "query": "", "current": {"text": "", "value": ""}}
+    ]
+  },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Log volume by service (lines/s)",
+      "gridPos": {"x": 0, "y": 0, "w": 16, "h": 6},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (rate({compose_project=~\"$project\", service_name=~\"$service\", level=~\"$level\"} |= ${search:doublequote} [$__auto]))", "legendFormat": "{{service_name}}"}],
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []}
+    },
+    {
+      "id": 2, "type": "stat", "title": "ERROR / FATAL entries (selected interval)",
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 6},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "expr": "sum(count_over_time({compose_project=~\"$project\", service_name=~\"$service\", level=~\"ERROR|FATAL\"} |= ${search:doublequote} [$__range]))", "queryType": "instant"}],
+      "fieldConfig": {"defaults": {"noValue": "0", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []}
+    },
+    {
+      "id": 3, "type": "logs", "title": "Centralized logs",
+      "gridPos": {"x": 0, "y": 6, "w": 24, "h": 18},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "expr": "{compose_project=~\"$project\", service_name=~\"$service\", level=~\"$level\"} |= ${search:doublequote}", "queryType": "range"}],
+      "options": {"showTime": true, "showLabels": true, "wrapLogMessage": true, "prettifyLogMessage": false, "enableLogDetails": true, "sortOrder": "Descending", "dedupStrategy": "none"}
+    }
+  ]
+}

@@ -85,6 +85,7 @@ public class TripServiceImpl implements TripService {
             .distanceKm(quote.estimatedDistanceKm())
             .estimatedFare(quote.totalFare())
             .currency(quote.currency())
+            .paymentProvider(request.getPaymentProvider())
             .correlationId(correlation)
             .build();
         trip = tripRepository.save(trip);
@@ -157,7 +158,8 @@ public class TripServiceImpl implements TripService {
         publish("TripCompleted", trip, null,
                 Map.of("tripId", tripId, "driverId", trip.getDriverId(), "passengerId", trip.getPassengerId(),
                         "actualDistanceKm", trip.getDistanceKm(), "actualDurationMin", duration, "finalFare",
-                        trip.getFinalFare(), "currency", trip.getCurrency(), "completedAt", completedAt));
+                        trip.getFinalFare(), "currency", trip.getCurrency(), "completedAt", completedAt,
+                        "paymentProvider", trip.getPaymentProvider()));
         return tripMapper.toResponse(trip);
     }
 

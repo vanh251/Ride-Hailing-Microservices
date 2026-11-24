@@ -75,6 +75,27 @@ small, .muted { color: var(--muted); }
 .route-field label { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); min-width: 0; cursor: pointer; }
 .route-field input { border: 0; background: transparent; padding: 0; font-size: 15px; font-weight: 550; outline: none; min-width: 0; }
 .route-field input::placeholder { color: #9aa7a0; font-weight: 450; }
+.route-field { flex-wrap: wrap; }
+.route-field label { flex-basis: 60%; }
+.search-status { width: 100%; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.search-status:empty { display: none; }
+.search-results { width: 100%; list-style: none; margin: 0; padding: 0; max-height: 210px; overflow-y: auto; }
+.search-results button { width: 100%; text-align: left; padding: 10px 8px; border: 0; border-bottom: 1px solid var(--line); background: var(--surface); font-size: 13px; line-height: 1.5; border-radius: 6px; }
+.search-results button:hover, .search-results button:focus-visible { background: var(--green-soft); }
+.map-tools { position: absolute; top: 16px; right: 16px; z-index: 450; display: flex; align-items: flex-end; flex-direction: column; gap: 8px; max-width: calc(100% - 32px); }
+.map-key { background: var(--surface); border-radius: 10px; padding: 8px 12px; box-shadow: var(--shadow); font-size: 12px; line-height: 1.6; max-width: 235px; }
+.map-key span { display: block; }
+.map-key .blue { color: var(--blue); }
+.map-key .green { color: var(--green-strong); }
+.map-key .red { color: var(--red); }
+.pin-me { display: block; width: 22px; height: 22px; background: var(--blue); border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 0 7px rgb(29 95 209 / 18%), 0 2px 8px rgb(0 0 0 / 25%); }
+.nearest-car { box-shadow: 0 0 0 5px rgb(29 95 209 / 30%); border-radius: 50%; }
+.location-summary { font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+.location-summary:empty { display: none; }
+.place-preview summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.place-preview[open] > * + * { margin-top: 12px; }
+.payment-panel { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 12px; background: var(--ground); }
+.payment-panel.paid { border-color: var(--green); background: var(--green-soft); }
 .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; position: relative; z-index: 1; }
 .dot.pickup { background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
 .dot.destination { background: var(--red); border-radius: 3px; box-shadow: 0 0 0 4px var(--red-soft); }

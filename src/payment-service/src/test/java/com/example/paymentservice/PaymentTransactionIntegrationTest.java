@@ -67,6 +67,19 @@ class PaymentTransactionIntegrationTest {
         paymentRepository.deleteAll();
     }
 
+    @Test
+    void payosCannotBeRefundedBySimulator() {
+        UUID tripId = UUID.randomUUID();
+        Payment payment = Payment.builder().paymentId(UUID.randomUUID()).tripId(tripId)
+                .passengerId(PASSENGER_ID).amount(new BigDecimal("36500")).currency("VND")
+                .paymentMethod("PAYOS").status(PaymentStatus.SUCCESS)
+                .idempotencyKey("payos-refund").correlationId("payos-refund").build();
+        paymentRepository.saveAndFlush(payment);
+        assertThrows(com.example.paymentservice.exception.ConflictException.class,
+                () -> paymentService.refund(tripId, "refund"));
+        assertEquals(PaymentStatus.SUCCESS, paymentRepository.findById(payment.getPaymentId()).orElseThrow().getStatus());
+        assertEquals(0, ledgerEntryRepository.count());
+    }
     private PaymentChargeRequest chargeRequest() {
         return PaymentChargeRequest.builder()
                 .passengerId(PASSENGER_ID)
