@@ -23,5 +23,6 @@ public class TripCompletedPayload {
     private Integer actualDurationMin;
     private BigDecimal finalFare;
     private String currency;
+    private String paymentProvider;
     private Instant completedAt;
 }

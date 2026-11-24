@@ -35,6 +35,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ExtendWith(MockitoExtension.class)
 class TripControllerTest {
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"CASH", "payos", "", "null"})
+    void createTrip_rejectsInvalidPaymentProvider(String provider) throws Exception {
+        String value = "null".equals(provider) ? "null" : "\"" + provider + "\"";
+        mockMvc.perform(post("/api/trips").contentType(MediaType.APPLICATION_JSON)
+            .header("X-User-Id", UUID.randomUUID())
+            .content("""
+                {"pickup":{"latitude":21.0,"longitude":105.0},
+                 "destination":{"latitude":21.1,"longitude":105.1},"paymentProvider":%s}
+                """.formatted(value)))
+            .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(tripService);
+    }
+
     private MockMvc mockMvc;
 
     @Mock

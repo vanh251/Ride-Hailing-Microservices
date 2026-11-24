@@ -31,12 +31,16 @@
   </header>
   <main class="stage">
     <div id="map" class="map" role="application" aria-label="Bản đồ chọn điểm đón và điểm đến"></div>
+    <div class="map-tools">
+      <button id="locate-me" class="btn ghost small" type="button">Vị trí của tôi</button>
+      <div class="map-key"><span class="blue">● Vị trí hiện tại của bạn</span><span class="green">● Điểm đón · Xe gần nhất có viền xanh</span><span class="red">■ Điểm đến</span></div>
+    </div>
 
     <section id="plan" class="sheet" aria-labelledby="plan-title">
       <h1 id="plan-title">Bạn muốn đi đâu?</h1>
       <div class="route">
-        <div class="route-field active" data-pick="pickup"><span class="dot pickup"></span><label>Điểm đón<input id="pickup-address" placeholder="Chạm bản đồ để chọn" maxlength="180"></label></div>
-        <div class="route-field" data-pick="destination"><span class="dot destination"></span><label>Điểm đến<input id="destination-address" placeholder="Chạm bản đồ để chọn" maxlength="180"></label></div>
+        <div class="route-field active" data-pick="pickup"><span class="dot pickup"></span><label>Điểm đón<input id="pickup-address" placeholder="Nhập tên địa điểm hoặc địa chỉ" maxlength="180" autocomplete="off" aria-describedby="pickup-search-status"></label><button id="pickup-search" class="btn ghost small" type="button" aria-label="Tìm điểm đón" aria-controls="pickup-results">Tìm</button><small id="pickup-search-status" class="search-status" role="status"></small><ul id="pickup-results" class="search-results" aria-label="Kết quả điểm đón" hidden></ul></div>
+        <div class="route-field" data-pick="destination"><span class="dot destination"></span><label>Điểm đến<input id="destination-address" placeholder="Nhập tên địa điểm hoặc địa chỉ" maxlength="180" autocomplete="off" aria-describedby="destination-search-status"></label><button id="destination-search" class="btn ghost small" type="button" aria-label="Tìm điểm đến" aria-controls="destination-results">Tìm</button><small id="destination-search-status" class="search-status" role="status"></small><ul id="destination-results" class="search-results" aria-label="Kết quả điểm đến" hidden></ul></div>
       </div>
       <p class="hint"><svg class="icon"><use href="#i-tap"/></svg><span id="pick-hint">Chạm vào bản đồ để đặt điểm đón.</span></p>
       <div class="sheet-section">
@@ -44,11 +48,14 @@
         <div class="chips" id="places"></div>
       </div>
       <div class="vehicle"><svg class="icon"><use href="#i-car"/></svg><div><strong>Đi Car</strong><small id="nearby-count">Đang tìm xe quanh đây…</small></div></div>
+      <p id="nearest-driver" class="location-summary" role="status"></p>
+      <button id="refresh-nearby" class="btn ghost small" type="button">Cập nhật xe gần đây</button>
       <div class="fare">
         <div><small>Giá ước tính</small><strong id="fare">—</strong></div>
         <div class="meta" id="fare-meta">Chọn đủ hai điểm<br>để xem giá</div>
       </div>
       <button id="book" class="btn primary block" disabled>Đặt xe</button>
+      <p class="hint">Thanh toán qua payOS sau khi hoàn thành chuyến đi.</p>
     </section>
 
     <section id="track" class="sheet" aria-labelledby="status-title" hidden>
@@ -59,6 +66,12 @@
       </div>
       <ol id="timeline" class="timeline"></ol>
       <dl id="facts" class="facts"></dl>
+      <div id="payment-panel" class="payment-panel" aria-labelledby="payment-title" hidden>
+        <h2 id="payment-title">Chờ thanh toán</h2>
+        <p id="payment-message" class="location-summary" role="status"></p>
+        <button id="pay-checkout" class="btn primary block" type="button">Thanh toán payOS</button>
+        <button id="payment-refresh" class="btn ghost small" type="button">Kiểm tra thanh toán</button>
+      </div>
       <div class="actions">
         <button id="cancel" class="btn danger">Hủy chuyến</button>
         <button id="new-trip" class="btn primary">Đặt chuyến mới</button>
@@ -73,7 +86,9 @@
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
   <script type="module">
-    import {$, esc, api, requireRole, renderAccount, toast, failure, makeMap, pinIcon, placeLabel} from './ride.mjs';
+    import {$, esc, api, requireRole, renderAccount, toast, failure, makeMap, pinIcon, placeLabel, placeSearch, locateMe, focusPoint} from './ride.mjs';
+    import {nearbyByDistance} from './geo.mjs';
+    import {paymentPanel} from './payment.mjs';
     import {STAGES, TERMINAL, statusText, stageIndex, unseen, canCancel, money, noteText} from './ride-core.mjs';
     import {parseRoute, bookingUncertain} from './client.mjs';
 
@@ -83,6 +98,7 @@
     function main() {
       renderAccount(session, 'Hành khách');
       const map = makeMap($('map'));
+      const payments = paymentPanel(session);
       const PLACES = [
         ['Hồ Hoàn Kiếm', 21.0287, 105.8524], ['Nhà hát Lớn', 21.0242, 105.8576], ['Văn Miếu', 21.0293, 105.8355],
         ['Lăng Bác', 21.0368, 105.8346], ['Ga Hà Nội', 21.0245, 105.8412], ['Phủ Tây Hồ', 21.0598, 105.8195],
@@ -92,7 +108,7 @@
         ASSIGNING: 'Đã tìm thấy tài xế, đang chờ tài xế xác nhận.',
         ASSIGNED: 'Tài xế đã nhận chuyến và đang đến điểm đón.',
         IN_PROGRESS: 'Bạn đang trên đường đến điểm đến.',
-        COMPLETED: 'Chuyến đã kết thúc. Hệ thống đang thanh toán.',
+        COMPLETED: 'Chuyến đã kết thúc. Vui lòng thanh toán để hoàn tất.',
         PAID: 'Thanh toán thành công. Cảm ơn bạn đã đi cùng Đi.',
         CANCELLED: 'Chuyến đã được hủy.',
         PAYMENT_FAILED: 'Thanh toán không thành công. Vui lòng liên hệ hỗ trợ.',
@@ -108,7 +124,8 @@
       let trip = null, picking = 'pickup', quoteFor = '', busy = false, roadTrip = null;
       const route = {pickup: null, destination: null};
       const markers = {pickup: null, destination: null};
-      let line = null;
+      let line = null, meMarker = null, nearbyVersion = 0, quoteVersion = 0, pickupVersion = 0;
+      const searches = {};
       const driversLayer = L.layerGroup().addTo(map);
       const seen = new Set();
       let primed = false;
@@ -121,16 +138,55 @@
       }
       for (const field of document.querySelectorAll('[data-pick]')) field.onclick = () => setPicking(field.dataset.pick);
 
+      function invalidate(kind) {
+        route[kind] = null;
+        markers[kind]?.remove(); markers[kind] = null;
+        quoteVersion++;
+        quoteFor = '';
+        $('fare').textContent = '—';
+        $('fare-meta').innerHTML = 'Chọn đủ hai điểm<br>để xem giá';
+        $('book').disabled = true;
+        if (kind === 'pickup') {
+          pickupVersion++;
+          nearbyVersion++;
+          driversLayer.clearLayers();
+          $('nearest-driver').textContent = '';
+          $('nearby-count').textContent = 'Chọn điểm đón để tìm tài xế gần nhất';
+          $('refresh-nearby').disabled = false;
+        }
+        drawLine();
+      }
+      for (const kind of ['pickup', 'destination']) searches[kind] = placeSearch(kind, map, point => {
+        if (tripId || busy) return;
+        setPoint(kind, L.latLng(point.latitude, point.longitude), point.address);
+        if (!route.pickup || !route.destination) focusPoint(map, [point.latitude, point.longitude]);
+      }, () => invalidate(kind));
+
+      locateMe($('locate-me'), (position, askedPickupVersion) => {
+        const {latitude, longitude, accuracy} = position.coords;
+        const point = [latitude, longitude];
+        if (!meMarker) meMarker = L.marker(point, {icon: pinIcon('me'), title: 'Vị trí hiện tại của bạn'}).addTo(map);
+        else meMarker.setLatLng(point);
+        meMarker.bindPopup(`Vị trí GPS của bạn · Sai số khoảng ${Math.round(accuracy)} m`);
+        if (askedPickupVersion !== pickupVersion) return;
+        if (!tripId && !busy) setPoint('pickup', L.latLng(latitude, longitude), `Vị trí hiện tại (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`);
+        focusPoint(map, point, 16);
+      }, () => pickupVersion);
+
       function setPoint(kind, latlng, address) {
+        if (tripId || busy) return;
+        searches[kind].clear();
+        if (kind === 'pickup') pickupVersion++;
         route[kind] = {latitude: latlng.lat, longitude: latlng.lng};
         $(`${kind}-address`).value = address;
         if (!markers[kind]) {
-          markers[kind] = L.marker(latlng, {icon: pinIcon(kind), draggable: true, keyboard: false}).addTo(map);
+          markers[kind] = L.marker(latlng, {icon: pinIcon(kind), draggable: true, title: kind === 'pickup' ? 'Điểm đón khách hàng' : 'Điểm đến', keyboard: false}).addTo(map);
           markers[kind].on('dragend', () => setPoint(kind, markers[kind].getLatLng(), placeLabel(markers[kind].getLatLng())));
         } else markers[kind].setLatLng(latlng);
         drawLine();
         if (kind === 'pickup' && !route.destination) setPicking('destination');
         quote();
+        if (kind === 'pickup') nearby().catch(nearbyFailure);
       }
 
       // The road from Pricing's quote; a dotted straight line until it arrives or when routing is unavailable
@@ -152,7 +208,7 @@
       for (const chip of document.querySelectorAll('[data-place]')) chip.onclick = () => {
         const [name, lat, lng] = PLACES[chip.dataset.place];
         setPoint(picking, L.latLng(lat, lng), name);
-        map.panTo([lat, lng]);
+        if (!route.pickup || !route.destination) focusPoint(map, [lat, lng]);
       };
 
       function payload() {
@@ -160,6 +216,7 @@
       }
 
       async function quote() {
+        const asked = ++quoteVersion;
         $('book').disabled = true;
         if (!route.pickup || !route.destination) return;
         const key = JSON.stringify(route);
@@ -167,18 +224,20 @@
         $('fare').textContent = '…';
         try {
           const result = await api('/api/pricing/quote', {method: 'POST', body: payload()}, session);
-          if (quoteFor !== key) return;
+          if (asked !== quoteVersion || quoteFor !== key || tripId) return;
           drawLine(result.routePoints);
           $('fare').textContent = money(result.totalFare);
           $('fare-meta').innerHTML = `${esc(result.estimatedDistanceKm)} km<br>khoảng ${esc(result.estimatedDurationMin)} phút`;
           $('book').disabled = busy;
-        } catch (error) { $('fare').textContent = '—'; failure(error); }
+        } catch (error) { if (asked === quoteVersion && !tripId) { $('fare').textContent = '—'; failure(error); } }
       }
 
       $('book').onclick = async () => {
+        if (busy || tripId || !route.pickup || !route.destination || $('book').disabled) return;
         busy = true; $('book').disabled = true;
+        for (const kind of ['pickup', 'destination']) { searches[kind].clear(); markers[kind]?.dragging?.disable(); $(`${kind}-address`).disabled = true; $(`${kind}-search`).disabled = true; }
         try {
-          const created = await api('/api/trips', {method: 'POST', body: payload()}, session);
+          const created = await api('/api/trips', {method: 'POST', body: {...payload(), paymentProvider: 'PAYOS'}}, session);
           primed = true; seen.clear();
           follow(created);
           toast('Đã đặt xe', 'Đang tìm tài xế gần bạn.', 'success');
@@ -186,19 +245,29 @@
           if (bookingUncertain(error)) toast('Chưa rõ kết quả đặt xe', `Đừng đặt lại ngay. Mã yêu cầu: ${error.correlationId}`, 'warn');
           else failure(error);
           $('book').disabled = false;
-        } finally { busy = false; }
+        } finally {
+          busy = false;
+          for (const kind of ['pickup', 'destination']) {
+            $(`${kind}-address`).disabled = false; $(`${kind}-search`).disabled = false;
+            if (!tripId) markers[kind]?.dragging?.enable();
+          }
+        }
       };
 
       // --- Tracking ---
       function follow(next) {
         const changed = trip && trip.status !== next.status;
+        if (tripId !== next.tripId) pickupVersion++;
         trip = next; tripId = next.tripId;
+        quoteVersion++; nearbyVersion++;
+        for (const kind of ['pickup', 'destination']) { searches[kind].clear(); markers[kind]?.dragging?.disable(); }
         try { localStorage.setItem(tripKey, tripId); } catch { /* storage blocked */ }
         if (changed && STATUS_TOAST[next.status]) toast(statusText(next.status), SUBTITLE[next.status], STATUS_TOAST[next.status]);
         renderTrip();
       }
 
       function renderTrip() {
+        payments.update(trip);
         $('plan').hidden = Boolean(trip);
         $('track').hidden = !trip;
         driversLayer.clearLayers();
@@ -209,8 +278,9 @@
         }
         if (roadTrip !== trip.tripId && trip.pickup && trip.destination) {
           roadTrip = trip.tripId;
+          const nextTripId = trip.tripId;
           api('/api/pricing/quote', {method: 'POST', body: {pickup: trip.pickup, destination: trip.destination}}, session)
-            .then(result => drawLine(result.routePoints)).catch(() => {});
+            .then(result => { if (trip?.tripId === nextTripId) drawLine(result.routePoints); }).catch(() => {});
         }
         $('status-pill').className = `status-pill ${PILL[trip.status] || ''}`;
         $('status-pill').textContent = TERMINAL.has(trip.status) ? 'Đã kết thúc' : 'Đang diễn ra';
@@ -258,19 +328,52 @@
       $('new-trip').onclick = () => {
         try { localStorage.removeItem(tripKey); } catch { /* storage blocked */ }
         trip = null; tripId = null; roadTrip = null; seen.clear(); primed = false;
-        for (const kind of ['pickup', 'destination']) { markers[kind]?.remove(); markers[kind] = null; route[kind] = null; $(`${kind}-address`).value = ''; }
+        quoteVersion++; nearbyVersion++; pickupVersion++;
+        for (const kind of ['pickup', 'destination']) { searches[kind].clear(); markers[kind]?.remove(); markers[kind] = null; route[kind] = null; $(`${kind}-address`).value = ''; }
         drawLine(); setPicking('pickup');
         $('fare').textContent = '—'; $('fare-meta').innerHTML = 'Chọn đủ hai điểm<br>để xem giá'; $('book').disabled = true;
-        renderTrip(); poll();
+        renderTrip(); nearby().catch(nearbyFailure);
       };
 
       async function nearby() {
+        if (tripId) return;
+        const asked = ++nearbyVersion;
         const center = route.pickup ? {lat: route.pickup.latitude, lng: route.pickup.longitude} : map.getCenter();
-        const drivers = await api(`/api/drivers/nearby?latitude=${center.lat}&longitude=${center.lng}&radiusKm=3&size=20`, {}, session);
         driversLayer.clearLayers();
-        for (const driver of drivers) if (driver.location) L.marker([driver.location.latitude, driver.location.longitude], {icon: pinIcon('car'), interactive: false, keyboard: false}).addTo(driversLayer);
-        $('nearby-count').textContent = drivers.length ? `${drivers.length} tài xế sẵn sàng trong bán kính 3 km` : 'Chưa có tài xế sẵn sàng gần đây';
+        $('nearest-driver').textContent = '';
+        $('nearby-count').textContent = 'Đang tìm xe quanh điểm đón…';
+        $('refresh-nearby').disabled = true;
+        let drivers;
+        try {
+          drivers = await api(`/api/drivers/nearby?latitude=${center.lat}&longitude=${center.lng}&radiusKm=3&size=20`, {}, session);
+        } catch {
+          if (asked === nearbyVersion) nearbyFailure();
+          return;
+        } finally { if (asked === nearbyVersion) $('refresh-nearby').disabled = false; }
+        if (asked !== nearbyVersion || tripId) return;
+        const ordered = nearbyByDistance(drivers, {latitude: center.lat, longitude: center.lng});
+        driversLayer.clearLayers();
+        ordered.forEach((driver, index) => {
+          const title = index === 0 ? 'Tài xế gần nhất' : 'Tài xế sẵn sàng';
+          const icon = pinIcon('car');
+          if (index === 0) icon.options.className += ' nearest-car';
+          L.marker([driver.location.latitude, driver.location.longitude], {icon, title})
+            .bindPopup(`${esc(driver.fullName || title)} · ${driver.distanceKm.toFixed(2)} km đường chim bay`).addTo(driversLayer);
+        });
+        $('nearby-count').textContent = ordered.length ? `${ordered.length} tài xế sẵn sàng trong bán kính 3 km` : 'Chưa có tài xế sẵn sàng gần đây';
+        const closest = ordered[0];
+        $('nearest-driver').textContent = closest
+          ? `Gần nhất: ${closest.fullName || 'Tài xế'} · ${closest.distanceKm.toFixed(2)} km đường chim bay ${route.pickup ? 'từ điểm đón' : 'từ tâm bản đồ'}. Hệ thống tự ghép khi đặt xe.`
+          : 'Bạn vẫn có thể đặt xe để hệ thống tìm tài xế.';
       }
+
+      function nearbyFailure() {
+        if (tripId) return;
+        driversLayer.clearLayers();
+        $('nearest-driver').textContent = '';
+        $('nearby-count').textContent = 'Chưa tải được xe gần đây. Bấm cập nhật để thử lại.';
+      }
+      $('refresh-nearby').onclick = () => nearby().catch(nearbyFailure);
 
       let polling = false;
       async function poll() {
@@ -278,13 +381,15 @@
         polling = true;
         try {
           if (tripId) {
+            const askedTripId = tripId;
             const [next, notes] = await Promise.all([
               api(`/api/trips/${tripId}`, {}, session),
               api(`/api/notifications/trip/${tripId}`, {}, session).catch(() => null),
             ]);
+            if (tripId !== askedTripId) return;
             follow(next);
             if (notes) renderInbox(notes);
-          } else await nearby();
+          }
         } catch (error) {
           if (error.status === 404 && tripId) { $('new-trip').onclick(); return; }
           if (!poll.warned) { poll.warned = true; toast('Mất kết nối tạm thời', 'Ứng dụng sẽ tự thử lại.', 'warn'); }
@@ -293,6 +398,7 @@
         poll.warned = false;
       }
       poll();
+      if (!tripId) nearby().catch(nearbyFailure);
       setInterval(poll, 3000);
     }
   </script>

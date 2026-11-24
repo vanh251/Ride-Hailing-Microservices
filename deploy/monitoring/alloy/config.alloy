@@ -1,0 +1,69 @@
+logging {
+  level = "warn"
+}
+
+discovery.docker "project" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=" + sys.env("COMPOSE_PROJECT_NAME")]
+  }
+}
+
+discovery.relabel "logs" {
+  targets = discovery.docker.project.targets
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "api-gateway|identity-service|driver-service|trip-service|matching-service|pricing-service|payment-service|notification-service|kafka|identity-db|driver-db|trip-db|matching-db|payment-db"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service_name"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+}
+
+loki.source.docker "logs" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.logs.output
+  forward_to = [loki.process.logs.receiver]
+}
+
+loki.process "logs" {
+  forward_to = [loki.write.local.receiver]
+
+  stage.decolorize {}
+
+  // Stack traces belong to the preceding Java log entry, not a new stream.
+  stage.match {
+    selector = "{service_name=~\"api-gateway|identity-service|driver-service|trip-service|matching-service|pricing-service|payment-service|notification-service\"}"
+    stage.multiline {
+      firstline     = "^\\d{4}-\\d{2}-\\d{2}[ T]"
+      max_wait_time = "3s"
+      max_lines     = 256
+    }
+    stage.regex {
+      expression = "^\\d{4}-\\d{2}-\\d{2}[T ][^ ]+\\s+(?P<level>TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\\s"
+    }
+    stage.labels {
+      values = { level = "" }
+    }
+  }
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -165,6 +165,10 @@ docker compose up -d --build
 - **Prometheus Dashboard**: `http://localhost:9090/targets`
 - **Grafana Dashboard**: `http://localhost:3000` (User: `admin` / Password: `admin_secure_password_123`)
 
+Centralized container logs are available in Grafana's **DS03 Logs** dashboard and **Explore → Loki**.
+See [logging setup and queries](docs/operations.md#21-centralized-logs-in-grafana). Existing Grafana volumes retain
+their configured login; the credentials above are only the initial defaults.
+
 ## 5. Web Demo
 
 After starting the upgraded stack, open `http://localhost:8080/demo/login.html` for the passenger and driver apps (map, booking, popups), and `http://localhost:8080/demo/index.html` for the two-passengers-one-driver concurrency test. The pages are served by the Gateway and call the real APIs. Service stop/start stays in Docker Desktop or Compose commands.

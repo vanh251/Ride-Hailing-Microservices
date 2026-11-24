@@ -20,6 +20,9 @@ out/
 # Docker data
 *.data
 
+# Test and agent artifacts
+.playwright-mcp/
+
 # Claude Code
 .claude/
 CLAUDE.md
