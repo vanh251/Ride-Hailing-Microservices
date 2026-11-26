@@ -135,7 +135,13 @@ public class PaymentServiceImpl implements PaymentService {
             log.warn("Trip already has a payment, skipping charge: eventId={}, tripId={}, correlationId={}",
                     eventId, tripId, correlationId);
         } else {
-            processCharge(tripId, passengerId, finalFare, resolveCurrency(currency), idempotencyKey, correlationId, eventId);
+            // The passenger settles it from the app with POST /api/payments/{tripId}/pay (simulated transfer)
+            paymentRepository.saveAndFlush(Payment.builder()
+                    .paymentId(UUID.randomUUID()).tripId(tripId).passengerId(passengerId).amount(finalFare)
+                    .currency(resolveCurrency(currency)).paymentMethod(MOCK_PAYMENT_METHOD).status(PaymentStatus.PENDING)
+                    .correlationId(correlationId).idempotencyKey(idempotencyKey).build());
+            log.info("Payment due, waiting for the passenger's transfer: eventId={}, tripId={}, amount={}, correlationId={}",
+                    eventId, tripId, finalFare, correlationId);
         }
 
         processedEventRepository.save(ProcessedEvent.builder()
@@ -145,17 +151,26 @@ public class PaymentServiceImpl implements PaymentService {
                 .build());
     }
 
-    /**
-     * Charges through the simulated gateway and stores the payment, its ledger entry and the
-     * PaymentSucceeded / PaymentFailed outbox event in the caller's transaction.
-     */
+    @Override
+    @Transactional
+    public PaymentResponse payTrip(UUID tripId, UUID passengerId) {
+        Payment due = paymentRepository.findByIdempotencyKey(tripCompletedIdempotencyKey(tripId))
+                .orElseThrow(() -> new ResourceNotFoundException("No payment is due for trip " + tripId));
+        // Row lock: a double click or a second tab settles the transfer once
+        Payment payment = paymentRepository.lockById(due.getPaymentId()).orElseThrow();
+        if (!payment.getPassengerId().equals(passengerId)) {
+            throw new BusinessException("Only the trip's passenger can pay it", HttpStatus.FORBIDDEN, "FORBIDDEN");
+        }
+        if (payment.getStatus() != PaymentStatus.PENDING) {
+            return mapToResponse(payment);
+        }
+        return mapToResponse(settle(payment, null));
+    }
+
     private Payment processCharge(UUID tripId, UUID passengerId, BigDecimal amount, String currency,
                                   String idempotencyKey, String correlationId, String causationId) {
-        UUID paymentId = UUID.randomUUID();
-        boolean declined = paymentGatewaySimulator.isDeclined();
-
-        Payment payment = Payment.builder()
-                .paymentId(paymentId)
+        return settle(Payment.builder()
+                .paymentId(UUID.randomUUID())
                 .tripId(tripId)
                 .passengerId(passengerId)
                 .amount(amount)
@@ -163,15 +178,21 @@ public class PaymentServiceImpl implements PaymentService {
                 .paymentMethod(MOCK_PAYMENT_METHOD)
                 .correlationId(correlationId)
                 .idempotencyKey(idempotencyKey)
-                .build();
+                .build(), causationId);
+    }
 
-        if (declined) {
+    /**
+     * Runs the simulated transfer for a new or pending payment and stores the result, its ledger entry and the
+     * PaymentSucceeded / PaymentFailed outbox event in the caller's transaction.
+     */
+    private Payment settle(Payment payment, String causationId) {
+        if (paymentGatewaySimulator.isDeclined()) {
             payment.setStatus(PaymentStatus.FAILED);
             payment.setFailureReason(PaymentGatewaySimulator.SIMULATED_FAILURE);
             Payment saved = paymentRepository.saveAndFlush(payment);
             paymentEventProducer.publishPaymentFailed(saved, NO_RETRY, causationId);
             log.warn("Payment declined: paymentId={}, tripId={}, amount={}, reason={}, correlationId={}",
-                    paymentId, tripId, amount, saved.getFailureReason(), correlationId);
+                    saved.getPaymentId(), saved.getTripId(), saved.getAmount(), saved.getFailureReason(), saved.getCorrelationId());
             return saved;
         }
 
@@ -180,10 +201,10 @@ public class PaymentServiceImpl implements PaymentService {
         payment.setCapturedAt(Instant.now());
         // saveAndFlush surfaces a duplicate idempotency key here instead of at commit time
         Payment saved = paymentRepository.saveAndFlush(payment);
-        recordLedgerEntry(saved, LedgerEntryType.CAPTURE, amount, "Charge for trip " + tripId);
+        recordLedgerEntry(saved, LedgerEntryType.CAPTURE, saved.getAmount(), "Charge for trip " + saved.getTripId());
         paymentEventProducer.publishPaymentSucceeded(saved, causationId);
         log.info("Payment captured: paymentId={}, tripId={}, amount={} {}, correlationId={}",
-                paymentId, tripId, amount, currency, correlationId);
+                saved.getPaymentId(), saved.getTripId(), saved.getAmount(), saved.getCurrency(), saved.getCorrelationId());
         return saved;
     }
 

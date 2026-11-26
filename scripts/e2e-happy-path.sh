@@ -135,7 +135,17 @@ call POST "/api/trips/$TRIP_ID/complete" "" "$DRIVER_TOKEN"; expect_status 200
 FINAL_FARE=$(json finalFare); [ -n "$FINAL_FARE" ] || fail "no finalFare"
 pass "COMPLETED, finalFare $FINAL_FARE (Pricing /final)"
 
-step "Payment charges the trip (trip PAID)"
+step "Passenger transfers from the Đi wallet (trip PAID)"
+# TripCompleted only opens the amount due; the passenger pays it (POST /api/payments/{tripId}/pay)
+deadline=$((SECONDS + WAIT_SECONDS))
+until call GET "/api/payments/$TRIP_ID" "" "$PASSENGER_TOKEN"; [ "$STATUS" = "200" ] && [ "$(json status)" = "PENDING" ]; do
+  [ $SECONDS -lt $deadline ] || fail "no payment due for the trip after ${WAIT_SECONDS}s"
+  sleep 1
+done
+pass "payment due $(json amount) VND"
+call POST "/api/payments/$TRIP_ID/pay" "" "$PASSENGER_TOKEN"
+expect_status 200; [ "$(json status)" = "SUCCESS" ] || fail "transfer status $(json status)"
+pass "transfer SUCCESS"
 wait_trip_status PAID
 pass "trip PAID"
 call GET "/api/payments/$TRIP_ID" "" "$PASSENGER_TOKEN"

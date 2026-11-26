@@ -381,7 +381,7 @@ The driver has completed the trip (arrived at destination). Triggers payment pro
 
 | Consumer | Action |
 |---|---|
-| payment-service | Deduplicate via `eventId` → charge `finalFare` once per trip (idempotency key `trip-{tripId}-completed`) → publish `payment.success` or `payment.failed` with `causationId` = this `eventId`. This event is the **only** trigger of a charge in the business flow (contract v1.1); `POST /api/payments/{tripId}/charge` is for manual tests only |
+| payment-service | Deduplicate via `eventId` → open one amount due of `finalFare` per trip (`PENDING`, idempotency key `trip-{tripId}-completed`). The passenger pays it in the app with `POST /api/payments/{tripId}/pay` (simulated transfer from the Đi wallet), which publishes `payment.success` or `payment.failed`. `paymentProvider = PAYOS` trips use the payOS checkout instead (docs/payos.md). `POST /api/payments/{tripId}/charge` is for manual tests only |
 | driver-service | Dedup via `eventId` → release driver `BUSY -> AVAILABLE` only if `drivers.reserved_for_trip = tripId`; clear `reserved_for_trip`, `version + 1`. No match → log and skip |
 | notification-service | Notify passenger: "Trip completed. Processing payment..." |
 

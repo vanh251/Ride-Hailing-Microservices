@@ -16,6 +16,9 @@ public interface PaymentService {
 
     void processPayosTripCompleted(UUID tripId);
 
+    /** The passenger's simulated transfer for a completed trip; repeating it returns the first result. */
+    PaymentResponse payTrip(UUID tripId, UUID passengerId);
+
     void processTripCompleted(String eventId, UUID tripId, UUID passengerId, BigDecimal finalFare,
                               String currency, String correlationId);
 }

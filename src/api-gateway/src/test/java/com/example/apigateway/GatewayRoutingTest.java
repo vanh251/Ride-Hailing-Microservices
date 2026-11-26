@@ -60,6 +60,7 @@ class GatewayRoutingTest {
             "POST,   /api/pricing/quote,           PASSENGER",
             "GET,    /api/payments/t1,             PASSENGER",
             "POST,   /api/payments/t1/checkout,    PASSENGER",
+            "POST,   /api/payments/t1/pay,         PASSENGER",
             "GET,    /api/payments/t1/checkout,    PASSENGER",
             "GET,    /api/payments/t1/checkout,    DRIVER",
             "POST,   /api/payments/webhooks/payos, NONE",
@@ -99,6 +100,8 @@ class GatewayRoutingTest {
     @ParameterizedTest
     @CsvSource({
             "POST, /api/payments/t1/checkout, DRIVER, 403",
+            "POST, /api/payments/t1/pay, DRIVER, 403",
+            "POST, /api/payments/t1/pay, NONE, 401",
             "POST, /api/payments/t1/checkout, ADMIN, 403",
             "POST, /api/payments/t1/checkout, NONE, 401",
             "GET, /api/payments/t1/checkout, NONE, 401",

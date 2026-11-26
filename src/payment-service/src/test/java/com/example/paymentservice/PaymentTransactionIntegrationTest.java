@@ -133,8 +133,8 @@ class PaymentTransactionIntegrationTest {
     }
 
     @Test
-    @DisplayName("processTripCompleted with the same trip twice (different eventIds) charges once")
-    void processTripCompleted_sameTripTwice_chargesOnce() {
+    @DisplayName("same trip completed twice opens one amount due; paying it twice transfers once")
+    void processTripCompleted_sameTripTwice_thenPayTwice_chargesOnce() {
         UUID tripId = UUID.randomUUID();
         when(paymentGatewaySimulator.isDeclined()).thenReturn(false);
 
@@ -143,7 +143,13 @@ class PaymentTransactionIntegrationTest {
         paymentService.processTripCompleted("evt-a", tripId, PASSENGER_ID, new BigDecimal("47500"), "VND", "corr-003");
 
         assertEquals(1, paymentRepository.count());
-        assertEquals(1, outboxEventRepository.count());
+        assertEquals(0, outboxEventRepository.count(), "nothing is paid before the passenger's transfer");
         assertEquals(2, processedEventRepository.count());
+
+        assertEquals(PaymentStatus.SUCCESS, paymentService.payTrip(tripId, PASSENGER_ID).getStatus());
+        assertEquals(PaymentStatus.SUCCESS, paymentService.payTrip(tripId, PASSENGER_ID).getStatus());
+
+        assertEquals(1, outboxEventRepository.count(), "one PaymentSucceeded for one transfer");
+        assertEquals(1, ledgerEntryRepository.count());
     }
 }

@@ -137,6 +137,23 @@ services:
     networks:
       - ride-hailing-network
 
+  # Web view of topics, messages and consumer lag (docs/operations.md §2), read-only for demos
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:v1.1.0
+    container_name: kafka-ui
+    ports:
+      - "${KAFKA_UI_PORT:-8090}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: ds03
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      # Nobody can delete topics or reset offsets from the UI during a demo
+      KAFKA_CLUSTERS_0_READONLY: "true"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - ride-hailing-network
+
   # ========================================================
   # INFRASTRUCTURE: MONITORING (Prometheus + Grafana)
   # ========================================================
