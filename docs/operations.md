@@ -18,6 +18,10 @@ services share that cache and build their jars one after another.
 
 ## 2. Monitoring
 
+- Kafka UI: <http://localhost:8090> (read-only). **Topics → `trip-events` → Messages** shows each event with its
+  partition, offset, key (`tripId`) and JSON; **Consumers → `payment-service-group`** shows members and lag. While
+  payment-service is stopped the group has 0 members and lag 1 for the waiting `TripCompleted`; after the restart
+  lag returns to 0 and `PaymentSucceeded` appears on `payment-events`.
 - Prometheus: <http://localhost:9090/targets> scrapes `/actuator/prometheus` of all 8 services every 15s.
 - Grafana: <http://localhost:3000>, initial user/password from `.env` on first boot. An existing Grafana
   volume retains its previously configured login; changing `.env` does not reset it. The dashboard **DS03 Services** is
@@ -115,9 +119,9 @@ skip it (`processed_events`). Notification Service has no deduplication and noti
 
 | # | Fault | Expected, checked by the script |
 |---|---|---|
-| 1 | Payment Service stopped while the event is published | Kafka keeps the event; after restart the trip is charged |
+| 1 | Payment Service stopped while the event is published | Kafka keeps the event; after restart the trip's amount due is recorded (the passenger then pays it in the app) |
 | 2 | Same event sent twice, plus the same trip with a new `eventId` | exactly 1 row in `payments` |
-| 3 | `payment-db` stopped | 3 retries, event lands in `trip-events.DLQ`; after the database is back, replay charges the trip |
+| 3 | `payment-db` stopped | 3 retries, event lands in `trip-events.DLQ`; after the database is back, replay records the amount due |
 
 Result on 2026-11-13: all three scenarios passed.
 
