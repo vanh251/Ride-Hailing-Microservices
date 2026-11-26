@@ -3,6 +3,8 @@ package com.example.paymentservice.controller;
 import com.example.paymentservice.dto.request.PaymentChargeRequest;
 import com.example.paymentservice.dto.response.ErrorResponse;
 import com.example.paymentservice.dto.response.PaymentResponse;
+import com.example.paymentservice.exception.BusinessException;
+import com.example.paymentservice.payos.CheckoutIdentity;
 import com.example.paymentservice.service.PaymentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -28,6 +30,31 @@ import java.util.UUID;
 public class PaymentController {
 
     private final PaymentService paymentService;
+    private final CheckoutIdentity identity;
+
+    @Operation(summary = "Pay a completed trip",
+            description = "The trip's passenger pays the amount due with a simulated transfer. Repeating the call "
+                    + "returns the first result instead of paying again.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Transfer done (SUCCESS) or declined by the simulator (FAILED)",
+                    content = @Content(schema = @Schema(implementation = PaymentResponse.class))),
+            @ApiResponse(responseCode = "401", description = "Missing or invalid passenger token",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "403", description = "Not a passenger, or not this trip's passenger",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "404", description = "No payment is due for this trip yet",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @PostMapping("/{tripId}/pay")
+    public ResponseEntity<PaymentResponse> payTrip(
+            @Parameter(description = "ID of the completed trip") @PathVariable UUID tripId,
+            @RequestHeader(value = "Authorization", required = false) String bearer) {
+        var user = identity.verify(bearer);
+        if (!"PASSENGER".equals(user.role())) {
+            throw new BusinessException("Only a passenger can pay a trip", HttpStatus.FORBIDDEN, "FORBIDDEN");
+        }
+        return ResponseEntity.ok(paymentService.payTrip(tripId, user.id()));
+    }
 
     @Operation(summary = "Charge payment",
             description = "Charges the passenger for a trip. Repeating the call with the same idempotency key "

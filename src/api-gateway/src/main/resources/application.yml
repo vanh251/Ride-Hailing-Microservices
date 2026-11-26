@@ -40,7 +40,7 @@ spring:
             - id: payment-service
               uri: ${PAYMENT_SERVICE_URL:http://payment-service:8086}
               predicates:
-                - Path=/api/payments/*,/api/payments/*/checkout,/api/payments/webhooks/payos
+                - Path=/api/payments/*,/api/payments/*/checkout,/api/payments/*/pay,/api/payments/webhooks/payos
 
             - id: notification-service
               uri: ${NOTIFICATION_SERVICE_URL:http://notification-service:8087}

@@ -2,9 +2,10 @@
 # Fault and recovery tests of the payment flow (docs/timeline.md W5/W6). Each scenario publishes a
 # TripCompleted fixture for a fresh trip and checks the result in payment-service and payment_db.
 #
-#   1. Payment Service DOWN  -> Kafka keeps the event -> restart -> the trip is charged
-#   2. Duplicate event       -> same eventId twice + same trip with a new eventId -> charged once
-#   3. payment-db DOWN       -> 3 retries -> trip-events.DLQ -> db back -> replay-dlq.sh -> charged
+#   1. Payment Service DOWN  -> Kafka keeps the event -> restart -> the amount due is recorded
+#   2. Duplicate event       -> same eventId twice + same trip with a new eventId -> one payment
+#   3. payment-db DOWN       -> 3 retries -> trip-events.DLQ -> db back -> replay-dlq.sh -> recorded
+# Processing TripCompleted opens the trip's amount due (PENDING); the passenger then pays it in the app.
 #
 # Usage:   scripts/fault-tests.sh [1|2|3]      (no argument: all three)
 # Needs:   kafka, payment-db and payment-service of docker-compose.yml running,
@@ -42,7 +43,8 @@ wait_for() {
     sleep 2
   done
 }
-is_paid() { [ "$(payment_status "$1")" = "SUCCESS" ]; }
+# The event was processed once Payment has a row for the trip (PENDING until the passenger pays)
+is_paid() { [ -n "$(payment_status "$1")" ]; }
 payment_up() { curl -sf "$PAYMENT_URL/actuator/health" >/dev/null; }
 
 scenario_1() {
@@ -51,8 +53,8 @@ scenario_1() {
   docker compose stop payment-service >/dev/null 2>&1 || fail "could not stop payment-service"
   send --trip-id "$trip"; pass "TripCompleted published while payment-service is stopped"
   docker compose start payment-service >/dev/null 2>&1 || fail "could not start payment-service"
-  wait_for "payment SUCCESS" is_paid "$trip"
-  pass "after restart the consumer received the event and charged the trip"
+  wait_for "payment recorded" is_paid "$trip"
+  pass "after restart the consumer received the event and recorded the amount due"
 }
 
 scenario_2() {
@@ -61,7 +63,7 @@ scenario_2() {
   send --trip-id "$trip" --event-id "$event"
   send --trip-id "$trip" --event-id "$event"
   send --trip-id "$trip"
-  wait_for "payment SUCCESS" is_paid "$trip"
+  wait_for "payment recorded" is_paid "$trip"
   sleep 5   # let the two duplicates be consumed too
   [ "$(payment_count "$trip")" = "1" ] || fail "trip has $(payment_count "$trip") payments, expected 1"
   pass "3 TripCompleted events, 1 payment"
@@ -80,8 +82,8 @@ scenario_3() {
   wait_for "payment-db ready" db_up
   wait_for "payment-service healthy" payment_up
   scripts/kafka/replay-dlq.sh trip-events "$trip" || fail "replay failed"
-  wait_for "payment SUCCESS" is_paid "$trip"
-  pass "replayed event charged the trip"
+  wait_for "payment recorded" is_paid "$trip"
+  pass "replayed event recorded the amount due"
 }
 
 payment_up || { echo "payment-service is not reachable at $PAYMENT_URL"; exit 1; }

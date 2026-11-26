@@ -925,6 +925,18 @@ Price of a completed trip. A trip has one price: Trip sends the distance stored 
 
 ---
 
+### POST /api/payments/{tripId}/pay
+
+The trip's passenger pays the amount due with a simulated transfer from the Đi wallet (virtual money). The amount due is opened by `TripCompleted`; the request has no body, so the amount cannot be changed by the client. Repeating the call returns the first result.
+
+**Auth required:** Yes (PASSENGER, the trip's own passenger).
+
+**Response 200 OK:** the payment, `status` = `SUCCESS`, or `FAILED` when the simulator declines (`PAYMENT_FAILURE_MODE`); either result publishes `payment.success` / `payment.failed` and the trip becomes `PAID` / `PAYMENT_FAILED`.
+
+**Errors:** `401` missing or invalid token, `403` not a passenger or not this trip's passenger, `404` no amount due yet (trip not completed, or Payment has not processed `TripCompleted`).
+
+---
+
 ### POST /api/payments/{tripId}/charge
 
 Charge a passenger for a trip (manual test path).

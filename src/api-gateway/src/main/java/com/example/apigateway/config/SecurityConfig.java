@@ -46,7 +46,7 @@ public class SecurityConfig {
                     "/api/auth/login"
                 ).permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/payments/webhooks/payos").permitAll()
-                .requestMatchers(HttpMethod.POST, "/api/payments/*/checkout").hasRole("PASSENGER")
+                .requestMatchers(HttpMethod.POST, "/api/payments/*/checkout", "/api/payments/*/pay").hasRole("PASSENGER")
                 .requestMatchers(HttpMethod.GET, "/api/payments/*/checkout").hasAnyRole("PASSENGER", "DRIVER")
                 // Public for now: see GET /api/drivers/available in docs/api.md
                 .requestMatchers(HttpMethod.GET, "/api/drivers/available").permitAll()

@@ -250,8 +250,8 @@ class PaymentServiceTest {
     }
 
     @Test
-    @DisplayName("processTripCompleted with new event charges, records the event and uses its eventId as causationId")
-    void processTripCompleted_newEvent_processesCharge() {
+    @DisplayName("processTripCompleted with new event opens the amount due and records the event, without paying it")
+    void processTripCompleted_newEvent_createsPendingPayment() {
         when(processedEventRepository.existsByEventId("evt-new")).thenReturn(false);
         when(paymentRepository.findByIdempotencyKey("trip-" + TRIP_ID + "-completed")).thenReturn(Optional.empty());
         when(paymentRepository.saveAndFlush(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -261,9 +261,9 @@ class PaymentServiceTest {
         ArgumentCaptor<Payment> saved = ArgumentCaptor.forClass(Payment.class);
         verify(paymentRepository).saveAndFlush(saved.capture());
         assertEquals(PASSENGER_ID, saved.getValue().getPassengerId());
-        assertEquals(PaymentStatus.SUCCESS, saved.getValue().getStatus());
+        assertEquals(PaymentStatus.PENDING, saved.getValue().getStatus());
         verify(processedEventRepository).save(any());
-        verify(paymentEventProducer).publishPaymentSucceeded(any(Payment.class), eq("evt-new"));
+        verifyNoInteractions(paymentEventProducer, paymentGatewaySimulator);
     }
 
     @Test
@@ -281,17 +281,39 @@ class PaymentServiceTest {
     }
 
     @Test
-    @DisplayName("processTripCompleted declined by the gateway publishes PaymentFailed instead of throwing")
-    void processTripCompleted_declined_publishesPaymentFailed() {
-        when(processedEventRepository.existsByEventId("evt-fail")).thenReturn(false);
-        when(paymentRepository.findByIdempotencyKey("trip-" + TRIP_ID + "-completed")).thenReturn(Optional.empty());
+    @DisplayName("payTrip declined by the simulator publishes PaymentFailed instead of throwing")
+    void payTrip_declined_publishesPaymentFailed() {
+        Payment due = existingPayment(PaymentStatus.PENDING, AMOUNT);
+        when(paymentRepository.findByIdempotencyKey("trip-" + TRIP_ID + "-completed")).thenReturn(Optional.of(due));
+        when(paymentRepository.lockById(due.getPaymentId())).thenReturn(Optional.of(due));
         when(paymentGatewaySimulator.isDeclined()).thenReturn(true);
         when(paymentRepository.saveAndFlush(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        paymentService.processTripCompleted("evt-fail", TRIP_ID, PASSENGER_ID, AMOUNT, "VND", "corr-001");
+        PaymentResponse response = paymentService.payTrip(TRIP_ID, PASSENGER_ID);
 
-        verify(paymentEventProducer).publishPaymentFailed(any(Payment.class), eq(0), eq("evt-fail"));
+        assertEquals(PaymentStatus.FAILED, response.getStatus());
+        verify(paymentEventProducer).publishPaymentFailed(any(Payment.class), eq(0), isNull());
         verify(paymentEventProducer, never()).publishPaymentSucceeded(any(), any());
-        verify(processedEventRepository).save(any());
+    }
+
+    @Test
+    @DisplayName("payTrip by another passenger is refused and pays nothing")
+    void payTrip_otherPassenger_forbidden() {
+        Payment due = existingPayment(PaymentStatus.PENDING, AMOUNT);
+        when(paymentRepository.findByIdempotencyKey("trip-" + TRIP_ID + "-completed")).thenReturn(Optional.of(due));
+        when(paymentRepository.lockById(due.getPaymentId())).thenReturn(Optional.of(due));
+
+        BusinessException error = assertThrows(BusinessException.class, () -> paymentService.payTrip(TRIP_ID, UUID.randomUUID()));
+
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+        verifyNoInteractions(paymentEventProducer, paymentGatewaySimulator);
+    }
+
+    @Test
+    @DisplayName("payTrip before the trip is completed finds nothing due")
+    void payTrip_nothingDue_notFound() {
+        when(paymentRepository.findByIdempotencyKey("trip-" + TRIP_ID + "-completed")).thenReturn(Optional.empty());
+
+        assertThrows(ResourceNotFoundException.class, () -> paymentService.payTrip(TRIP_ID, PASSENGER_ID));
     }
 }

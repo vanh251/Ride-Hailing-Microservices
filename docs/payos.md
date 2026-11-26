@@ -1,6 +1,6 @@
 # Thanh toán payOS sau chuyến đi
 
-Giao diện khách hàng đặt chuyến với `paymentProvider: PAYOS`. Hệ thống ghép xe và tính giá cuối chuyến như trước. Sau khi tài xế hoàn thành, khách mở trang thanh toán payOS; chỉ xác nhận từ backend mới chuyển chuyến sang `PAID`. Không có lựa chọn trả trước.
+Giao diện khách hàng hiện đặt chuyến với `paymentProvider: MOCK` và khách trả bằng **ví Đi (tiền ảo)** qua `POST /api/payments/{tripId}/pay` (docs/api.md). Luồng payOS dưới đây vẫn hoạt động cho chuyến đặt với `paymentProvider: PAYOS`; đổi một dòng trong `rider.html` để bật lại trên giao diện. Hệ thống ghép xe và tính giá cuối chuyến như trước. Sau khi tài xế hoàn thành, khách mở trang thanh toán payOS; chỉ xác nhận từ backend mới chuyển chuyến sang `PAID`. Không có lựa chọn trả trước.
 
 Các client API cũ không gửi `paymentProvider` tiếp tục dùng `MOCK` để các kịch bản kiểm thử hiện có không thực hiện chuyển tiền thật. `MOCK` và `PAYOS` được lưu riêng theo chuyến; không tự chuyển sang simulator khi payOS thiếu cấu hình.
 

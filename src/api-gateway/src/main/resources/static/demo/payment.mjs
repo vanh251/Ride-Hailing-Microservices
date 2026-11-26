@@ -1,12 +1,22 @@
 import {$, api, failure} from './ride.mjs';
+import {money} from './ride-core.mjs';
 
+// MOCK trips are paid by the passenger's simulated transfer from the Đi wallet (POST /api/payments/{id}/pay);
+// PAYOS trips through the hosted payOS checkout.
 export function paymentView(trip, payment, role) {
-  if (trip?.paymentProvider !== 'PAYOS' || !['COMPLETED', 'PAID'].includes(trip.status)) return {visible: false};
+  if (!['COMPLETED', 'PAID', 'PAYMENT_FAILED'].includes(trip?.status)) return {visible: false};
   const paid = trip.status === 'PAID' || payment?.status === 'SUCCESS';
   if (paid) return {visible: true, paid: true, canPay: false, title: 'Đã thanh toán', message: 'Thanh toán đã được hệ thống xác nhận.'};
   if (payment?.status === 'REVIEW_REQUIRED') return {visible: true, paid: false, canPay: false, title: 'Đang đối soát thanh toán', message: 'Giao dịch cần được kiểm tra. Vui lòng liên hệ hỗ trợ, chưa thanh toán thêm.'};
+  if (trip.status === 'PAYMENT_FAILED' || payment?.status === 'FAILED') return {visible: true, paid: false, canPay: false, title: 'Thanh toán thất bại',
+    message: 'Ví Đi từ chối giao dịch, không có tiền nào bị trừ. Chuyến kết thúc ở trạng thái thanh toán thất bại.'};
+  if (trip.paymentProvider !== 'PAYOS') {
+    if (!payment) return {visible: true, paid: false, canPay: false, title: 'Chờ thanh toán', message: 'Đang chờ hệ thống thanh toán ghi nhận khoản cần trả…'};
+    return {visible: true, paid: false, canPay: role === 'PASSENGER', label: `Chuyển khoản ${money(payment.amount)}`, title: 'Chờ thanh toán',
+      message: role === 'DRIVER' ? 'Chờ khách chuyển khoản từ ví Đi. Bạn không cần thu tiền mặt.' : ''};
+  }
   const expired = ['EXPIRED', 'CANCELLED'].includes(payment?.status);
-  return {visible: true, paid: false, canPay: role === 'PASSENGER', title: 'Chờ thanh toán',
+  return {visible: true, paid: false, canPay: role === 'PASSENGER', label: 'Thanh toán payOS', title: 'Chờ thanh toán',
     message: role === 'DRIVER' ? 'Chờ khách thanh toán qua payOS. Bạn không cần thu thêm tiền mặt.'
       : expired ? 'Phiên thanh toán trước đã kết thúc. Bấm thanh toán để thử lại.'
       : 'Mở payOS để quét QR hoặc thanh toán bằng ứng dụng ngân hàng. Sau khi chuyển khoản, trang tự cập nhật trong vài giây.'};
@@ -31,10 +41,11 @@ export function paymentPanel(session) {
     if (!view.visible) return;
     $('payment-title').textContent = view.title;
     $('payment-message').textContent = error || view.message;
+    $('payment-message').hidden = !(error || view.message);
     $('payment-panel').classList.toggle('paid', Boolean(view.paid));
     $('pay-checkout').hidden = !view.canPay;
     $('pay-checkout').disabled = creating;
-    $('pay-checkout').textContent = creating ? 'Đang mở thanh toán…' : 'Thanh toán payOS';
+    $('pay-checkout').textContent = creating ? 'Đang xử lý…' : view.label || 'Thanh toán';
   }
   function showError(problem) {
     error = problem.status === 503 ? 'Thanh toán trực tuyến tạm thời chưa sẵn sàng. Vui lòng thử lại sau hoặc liên hệ hỗ trợ.'
@@ -45,10 +56,14 @@ export function paymentPanel(session) {
     const asked = generation, id = trip.tripId;
     loading = true; lastCheck = Date.now(); render();
     try {
-      const next = await api(`/api/payments/${id}/checkout`, {}, session);
+      const mock = trip.paymentProvider !== 'PAYOS';
+      const next = await api(mock ? `/api/payments/${id}` : `/api/payments/${id}/checkout`, {}, session);
       if (asked !== generation) return;
       payment = next; error = '';
-    } catch (problem) { if (asked === generation) showError(problem); }
+    } catch (problem) {
+      // 404 on a wallet trip: Payment has not recorded the amount due yet (it may be down); keep waiting
+      if (asked === generation) { if (problem.status === 404) { payment = null; error = ''; } else showError(problem); }
+    }
     finally { if (asked === generation) { loading = false; render(); } }
   }
   $('pay-checkout').onclick = async () => {
@@ -59,6 +74,10 @@ export function paymentPanel(session) {
     loading = false;
     creating = true; error = ''; render();
     try {
+      if (trip.paymentProvider !== 'PAYOS') {
+        payment = await api(`/api/payments/${id}/pay`, {method: 'POST'}, session);
+        return;
+      }
       const next = await api(`/api/payments/${id}/checkout`, {method: 'POST'}, session);
       if (asked !== generation) return;
       payment = next;
