@@ -45,20 +45,10 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentEventProducer paymentEventProducer;
     private final PaymentGatewaySimulator paymentGatewaySimulator;
 
-    @org.springframework.beans.factory.annotation.Autowired
-    private com.example.paymentservice.payos.PayosCheckoutService payosCheckoutService;
-
-    @Override
-    public void processPayosTripCompleted(UUID tripId) {
-        payosCheckoutService.pendingFromCompletedTrip(tripId);
-    }
-
     // noRollbackFor: a declined charge must keep its FAILED payment and PaymentFailed outbox event
     @Override
     @Transactional(noRollbackFor = PaymentDeclinedException.class)
     public PaymentResponse charge(UUID tripId, PaymentChargeRequest request, String idempotencyKeyHeader, String correlationId) {
-        if (paymentRepository.existsByTripIdAndPaymentMethod(tripId, "PAYOS"))
-            throw new ConflictException("payOS trips must use hosted checkout", "WRONG_PAYMENT_PROVIDER");
         String idempotencyKey = resolveIdempotencyKey(request, idempotencyKeyHeader);
         String resolvedCorrelationId = resolveCorrelationId(correlationId);
         log.info("Processing charge: tripId={}, idempotencyKey={}, correlationId={}",
@@ -96,9 +86,6 @@ public class PaymentServiceImpl implements PaymentService {
         log.info("Processing refund: tripId={}, correlationId={}", tripId, correlationId);
         Payment payment = paymentRepository.findTopByTripIdOrderByCreatedAtDesc(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("No payment found for trip " + tripId));
-
-        if ("PAYOS".equals(payment.getPaymentMethod()))
-            throw new ConflictException("payOS refunds are not supported by the simulator", "PAYOS_REFUND_UNSUPPORTED");
 
         if (payment.getStatus() == PaymentStatus.REFUNDED) {
             log.info("Payment already refunded: paymentId={}, tripId={}", payment.getPaymentId(), tripId);

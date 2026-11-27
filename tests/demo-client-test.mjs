@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {request, validSession, driverActions, bookPair, raceOutcome, canReplaceSession, bookingUncertain, parseRoute} from '../../src/api-gateway/src/main/resources/static/demo/client.mjs';
+import {request, validSession, driverActions, bookPair, raceOutcome, canReplaceSession, bookingUncertain, parseRoute} from '../src/api-gateway/src/main/resources/static/demo/client.mjs';
 
 test('request sends the selected bearer and surfaces backend failure without retrying a mutation', async () => {
   let calls = 0;

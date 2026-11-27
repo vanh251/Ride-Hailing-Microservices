@@ -19,7 +19,7 @@ These files are the shared contract between the service that publishes an event 
 ## How to use them
 
 - **Producer tests** check that the event they build has the same fields as the fixture.
-- **Consumer tests** read the fixture as the incoming message (path from a service folder: `../../docs/test-data/events/<EventType>.json`).
+- **Consumer tests** read the fixture as the incoming message (path from a service folder: `../../tests/data/events/<EventType>.json`).
 - **Manual tests**: `scripts/kafka/send-event.sh <EventType>` publishes a fixture to Kafka with a fresh `eventId` (see `scripts/kafka/README.md`).
 
 ## Changing a fixture

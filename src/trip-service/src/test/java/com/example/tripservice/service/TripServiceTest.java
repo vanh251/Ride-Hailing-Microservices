@@ -142,7 +142,7 @@ class TripServiceTest {
     }
 
     @Test
-    void completeCarriesProviderAndChargesPricingAmount() {
+    void completeChargesPricingAmount() {
         var t = trip(TripStatus.IN_PROGRESS);
         when(pricing.getFinalFare(id, 2.8, 20))
             .thenReturn(new PricingFinalFareResponse(id, new BigDecimal("47500"), "VND"));
@@ -151,12 +151,11 @@ class TripServiceTest {
         verify(events).publish(captor.capture());
         var p = (Map<?, ?>) captor.getValue().getPayload();
         assertEquals(Set.of("tripId", "driverId", "passengerId", "actualDistanceKm", "actualDurationMin", "finalFare",
-                "currency", "completedAt", "paymentProvider"), p.keySet());
+                "currency", "completedAt"), p.keySet());
         assertEquals(new BigDecimal("47500"), p.get("finalFare"));
         assertEquals(20, p.get("actualDurationMin"));
         assertEquals(passenger, p.get("passengerId"));
         assertEquals("VND", p.get("currency"));
-        assertEquals("MOCK", p.get("paymentProvider"));
         assertThrows(InvalidTripStateException.class, () -> service.completeTrip(id, driver));
     }
 
@@ -343,39 +342,13 @@ class TripServiceTest {
     private final JsonMapper json = new JsonMapper();
 
     @Test
-    void omittedProviderPersistsAndReturnsMockWithCurrency() {
-        createAndCheckProvider("", "MOCK");
-    }
-
-    @Test
-    void explicitPayosPersistsAndReturnsPayosWithCurrency() {
-        createAndCheckProvider(",\"paymentProvider\":\"PAYOS\"", "PAYOS");
-    }
-
-    private void createAndCheckProvider(String providerJson, String expected) {
+    void createdTripReturnsTheQuotedCurrency() {
         var request = json.readValue("""
             {"pickup":{"latitude":21.0,"longitude":105.0},
-             "destination":{"latitude":21.1,"longitude":105.1}%s}
-            """.formatted(providerJson), CreateTripRequest.class);
+             "destination":{"latitude":21.1,"longitude":105.1}}
+            """, CreateTripRequest.class);
         when(pricing.getQuote(any(), any()))
             .thenReturn(new PricingQuoteResponse(2.5, 12, new BigDecimal("33500"), "VND"));
-        var response = service.createTrip(request, UUID.randomUUID().toString(), passenger);
-        var saved = ArgumentCaptor.forClass(Trip.class);
-        verify(trips).save(saved.capture());
-        assertEquals(expected, saved.getValue().getPaymentProvider());
-        assertEquals(expected, response.getPaymentProvider());
-        assertEquals("VND", response.getCurrency());
-    }
-
-    @Test
-    void completedEventCarriesSelectedProvider() {
-        var trip = trip(TripStatus.IN_PROGRESS);
-        trip.setPaymentProvider("PAYOS");
-        when(pricing.getFinalFare(id, 2.8, 20))
-            .thenReturn(new PricingFinalFareResponse(id, new BigDecimal("47500"), "VND"));
-        service.completeTrip(id, driver);
-        var event = ArgumentCaptor.forClass(EventEnvelope.class);
-        verify(events).publish(event.capture());
-        assertEquals("PAYOS", ((Map<?, ?>) event.getValue().getPayload()).get("paymentProvider"));
+        assertEquals("VND", service.createTrip(request, UUID.randomUUID().toString(), passenger).getCurrency());
     }
 }

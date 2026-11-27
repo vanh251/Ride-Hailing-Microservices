@@ -168,10 +168,8 @@ def main():
                   "trip_id": trip["tripId"], "traced_services": traced_services,
                   "probe_id": probe_id, "dashboard_uid": "ds03-logs",
                   "verified": ["Loki ready", "provisioned Grafana Loki datasource and dashboard", "real cross-service correlation", "ERROR label", "multiline Java stack", "Compose project isolation", "all panel queries", "logs remain queryable after Alloy restart", "new logs are collected after Alloy restart"]}
-        output = Path("docs/acceptance/2026-11-23-centralized-logging.json")
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-        print("PASS Alloy restart; evidence:", output, flush=True)
+        print(json.dumps(result, indent=2), flush=True)
+        print("PASS Alloy restart", flush=True)
     finally:
         for name in names:
             subprocess.run(["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

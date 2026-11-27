@@ -387,12 +387,6 @@ services:
       PAYMENT_FAILURE_RATE: ${PAYMENT_FAILURE_RATE:-0.0}
       JWT_SECRET: ${JWT_SECRET}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-      TRIP_SERVICE_URL: http://trip-service:8083
-      PAYOS_CLIENT_ID: ${PAYOS_CLIENT_ID:-}
-      PAYOS_API_KEY: ${PAYOS_API_KEY:-}
-      PAYOS_CHECKSUM_KEY: ${PAYOS_CHECKSUM_KEY:-}
-      PAYOS_RETURN_URL: ${PAYOS_RETURN_URL:-http://localhost:8080/demo/rider.html}
-      PAYOS_CANCEL_URL: ${PAYOS_CANCEL_URL:-http://localhost:8080/demo/rider.html}
     depends_on:
       payment-db:
         condition: service_healthy

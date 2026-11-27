@@ -59,11 +59,7 @@ class GatewayRoutingTest {
             "POST,   /api/matching/r1/match,       ADMIN",
             "POST,   /api/pricing/quote,           PASSENGER",
             "GET,    /api/payments/t1,             PASSENGER",
-            "POST,   /api/payments/t1/checkout,    PASSENGER",
             "POST,   /api/payments/t1/pay,         PASSENGER",
-            "GET,    /api/payments/t1/checkout,    PASSENGER",
-            "GET,    /api/payments/t1/checkout,    DRIVER",
-            "POST,   /api/payments/webhooks/payos, NONE",
             "GET,    /api/notifications,           PASSENGER"
     })
     void route_publicPath_forwardedToBackend(String method, String path, String role) throws Exception {
@@ -99,16 +95,11 @@ class GatewayRoutingTest {
 
     @ParameterizedTest
     @CsvSource({
-            "POST, /api/payments/t1/checkout, DRIVER, 403",
             "POST, /api/payments/t1/pay, DRIVER, 403",
             "POST, /api/payments/t1/pay, NONE, 401",
-            "POST, /api/payments/t1/checkout, ADMIN, 403",
-            "POST, /api/payments/t1/checkout, NONE, 401",
-            "GET, /api/payments/t1/checkout, NONE, 401",
-            "GET, /api/payments/webhooks/payos, NONE, 401",
             "POST, /api/payments/webhooks/other, NONE, 401"
     })
-    void checkoutAndWebhook_haveExactAccessRules(String method, String path, String role, int status) throws Exception {
+    void pay_hasExactAccessRules(String method, String path, String role, int status) throws Exception {
         assertThat(send(method, path, role)).isEqualTo(status);
     }
 

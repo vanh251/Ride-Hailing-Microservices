@@ -1,5 +1,5 @@
 #!/bin/bash
-# Publishes one of the shared event fixtures (docs/test-data/events/<EventType>.json) to Kafka,
+# Publishes one of the shared event fixtures (tests/data/events/<EventType>.json) to Kafka,
 # as if the producing service had sent it. Lets a member test a consumer without the other service.
 #
 # Usage:
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-FIXTURES="$ROOT/docs/test-data/events"
+FIXTURES="$ROOT/tests/data/events"
 KAFKA_CONTAINER="${KAFKA_CONTAINER:-kafka}"
 
 # Ids used in the fixtures (docs/events.md examples)

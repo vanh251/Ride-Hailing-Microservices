@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {stageIndex, statusText, pageForRole, sessionFrom, unseen, assignedTripId, canCancel, money} from '../../src/api-gateway/src/main/resources/static/demo/ride-core.mjs';
+import {stageIndex, statusText, pageForRole, sessionFrom, unseen, assignedTripId, canCancel, money} from '../src/api-gateway/src/main/resources/static/demo/ride-core.mjs';
 
 test('each role lands on its own page and an unknown role on none', () => {
   assert.equal(pageForRole('PASSENGER'), 'rider.html');
@@ -51,13 +51,13 @@ test('fares are whole dong', () => {
 });
 
 test('notifications read in Vietnamese and unknown ones keep the server text', async () => {
-  const {noteText} = await import('../../src/api-gateway/src/main/resources/static/demo/ride-core.mjs');
+  const {noteText} = await import('../src/api-gateway/src/main/resources/static/demo/ride-core.mjs');
   assert.deepEqual(noteText({recipientType: 'DRIVER', eventType: 'DriverAssignmentConfirmed', title: 'New Trip Assigned'})[0], 'Có chuyến mới');
   assert.deepEqual(noteText({recipientType: 'PASSENGER', eventType: 'ManualNotification', title: 'Hi', message: 'There'}), ['Hi', 'There']);
 });
 
 test('passenger waits for the driver to accept a confirmed assignment', async () => {
-  const {passengerStatus} = await import('../../src/api-gateway/src/main/resources/static/demo/ride-core.mjs');
+  const {passengerStatus} = await import('../src/api-gateway/src/main/resources/static/demo/ride-core.mjs');
   assert.equal(passengerStatus({status: 'SEARCHING'}), 'SEARCHING');
   assert.equal(passengerStatus({status: 'ASSIGNING'}), 'ASSIGNING');
   assert.equal(passengerStatus({status: 'ASSIGNED'}), 'ASSIGNING');

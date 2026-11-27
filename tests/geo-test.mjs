@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import * as geo from '../../src/api-gateway/src/main/resources/static/demo/geo.mjs';
+import * as geo from '../src/api-gateway/src/main/resources/static/demo/geo.mjs';
 
 test('search maps GeoJSON longitude/latitude and street address to booking points', async () => {
   let request;

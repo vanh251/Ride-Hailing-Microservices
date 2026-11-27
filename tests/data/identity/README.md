@@ -7,7 +7,7 @@ Email nào đã tồn tại thì bỏ qua, nên khởi động lại service kh�
 
 Tất cả dùng chung mật khẩu `SEED_USER_PASSWORD` (mặc định `Demo@12345`). Đây là dữ liệu giả chỉ dùng cho local/demo: tắt bằng `SEED_DATA_ENABLED=false` ở môi trường khác.
 
-`userId` là **cố định**. 10 tài xế có hồ sơ xe tương ứng bên `driver-service` với `driverId` = `userId` (xem `docs/test-data/driver/README.md`).
+`userId` là **cố định**. 10 tài xế có hồ sơ xe tương ứng bên `driver-service` với `driverId` = `userId` (xem `tests/data/driver/README.md`).
 
 | # | Họ tên | Email | Role | userId (= driverId) |
 |---|---|---|---|---|
@@ -48,7 +48,7 @@ Tất cả dùng chung mật khẩu `SEED_USER_PASSWORD` (mặc định `Demo@12
 # 1. Đăng nhập bằng tài xế seed (qua API Gateway :8080, hoặc gọi thẳng :8081)
 curl -s -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
-  -d @docs/test-data/identity/03_login_seeded_driver.json
+  -d @tests/data/identity/03_login_seeded_driver.json
 
 # 2. Lấy accessToken và userId từ response ở bước 1
 TOKEN=<accessToken>

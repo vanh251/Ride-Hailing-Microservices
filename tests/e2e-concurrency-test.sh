@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 E2E_CONCURRENCY_LIB_ONLY=1 source "$ROOT/scripts/e2e-concurrency.sh"
 
 assert_rejected() {

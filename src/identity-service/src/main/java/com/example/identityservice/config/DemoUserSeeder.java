@@ -23,7 +23,7 @@ import java.util.UUID;
  * Creates fake DRIVER and PASSENGER accounts at startup so the demo (Register -> Login -> Trip) works on an empty
  * identity_db. All accounts share the password from app.seed.password.
  * The ids are fixed: driver-service seeds the matching driver profiles (driver_id = user id) with the same values,
- * see docs/test-data/identity/README.md. Emails that already exist are left untouched, so restarts are safe.
+ * see tests/data/identity/README.md. Emails that already exist are left untouched, so restarts are safe.
  * Turn it off with SEED_DATA_ENABLED=false.
  */
 @Slf4j

@@ -10,7 +10,7 @@
 
 ## Hồ sơ tài xế demo (seed tự động)
 
-Khi `driver-service` khởi động với `SEED_DATA_ENABLED=true` (mặc định), class `DemoDriverSeeder` tạo hồ sơ cho 10 tài khoản DRIVER mà `identity-service` seed sẵn. `driverId` chính là `userId` của tài khoản (xem `docs/test-data/identity/README.md`), đăng nhập bằng `driverNN@ds03.test` / `Demo@12345`.
+Khi `driver-service` khởi động với `SEED_DATA_ENABLED=true` (mặc định), class `DemoDriverSeeder` tạo hồ sơ cho 10 tài khoản DRIVER mà `identity-service` seed sẵn. `driverId` chính là `userId` của tài khoản (xem `tests/data/identity/README.md`), đăng nhập bằng `driverNN@ds03.test` / `Demo@12345`.
 Hồ sơ đã tồn tại thì bỏ qua. Vị trí là giả lập quanh Hồ Gươm, Hà Nội; khoảng cách tính từ Hồ Gươm (21.0285, 105.8542).
 
 | # | driverId | Họ tên | Trạng thái | Vị trí | Cách Hồ Gươm | Xe |
@@ -54,7 +54,7 @@ Quyền truy cập:
 
 ```bash
 GW=http://localhost:8080
-T=docs/test-data/driver
+T=tests/data/driver
 
 # 1. Tài xế #9 (đang OFFLINE) đăng nhập; userId trả về chính là driverId
 curl -s -X POST $GW/api/auth/login -H "Content-Type: application/json" \

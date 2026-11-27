@@ -1,4 +1,4 @@
-package com.example.paymentservice.payos;
+package com.example.paymentservice.security;
 
 import com.example.paymentservice.exception.BusinessException;
 import io.jsonwebtoken.*;
@@ -10,10 +10,10 @@ import org.springframework.stereotype.Component;
 import java.util.UUID;
 
 @Component
-public class CheckoutIdentity {
+public class CallerIdentity {
     public record Identity(UUID id, String role) {}
     private final JwtParser parser;
-    public CheckoutIdentity(@Value("${jwt.secret:dGhpc19pc19hX3Zlcnlfc2VjdXJlX2tleV9mb3JfaHMyNTZfamF2YV9zcHJpbmdfYm9vdF9kczAzX3JpZGVfaGFpbGluZw==}") String secret) {
+    public CallerIdentity(@Value("${jwt.secret:dGhpc19pc19hX3Zlcnlfc2VjdXJlX2tleV9mb3JfaHMyNTZfamF2YV9zcHJpbmdfYm9vdF9kczAzX3JpZGVfaGFpbGluZw==}") String secret) {
         parser=Jwts.parserBuilder().setSigningKey(Keys.hmacShaKeyFor(Decoders.BASE64.decode(secret))).build();
     }
     public Identity verify(String authorization) {

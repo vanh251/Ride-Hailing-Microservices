@@ -42,9 +42,6 @@ public class TripResponse {
     @Schema(description = "Final calculated fare upon completion in VND", example = "47500")
     private BigDecimal finalFare;
 
-    @Schema(description = "Payment provider", allowableValues = {"MOCK", "PAYOS"})
-    private String paymentProvider;
-
     @Schema(description = "Fare currency", example = "VND")
     private String currency;
 

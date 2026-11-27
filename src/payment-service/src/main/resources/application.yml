@@ -35,15 +35,6 @@ spring:
       ack-mode: manual_immediate
 
 payment:
-  payos:
-    client-id: ${PAYOS_CLIENT_ID:}
-    api-key: ${PAYOS_API_KEY:}
-    checksum-key: ${PAYOS_CHECKSUM_KEY:}
-    return-url: ${PAYOS_RETURN_URL:}
-    cancel-url: ${PAYOS_CANCEL_URL:}
-    base-url: ${PAYOS_BASE_URL:https://api-merchant.payos.vn}
-    timeout-ms: ${PAYOS_TIMEOUT_MS:5000}
-    reconcile-interval-ms: ${PAYOS_RECONCILE_INTERVAL_MS:30000}
   simulation:
     # none | always | rate (docs/SRS.md §5.6 simulate payment failure)
     failure-mode: ${PAYMENT_FAILURE_MODE:none}
@@ -83,8 +74,6 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
-trip-service:
-  url: ${TRIP_SERVICE_URL:http://trip-service:8083}
 internal:
   api-key: ${INTERNAL_API_KEY:local-dev-internal-api-key}
 jwt:

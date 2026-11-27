@@ -69,7 +69,7 @@ class TripEventConsumerKafkaTest {
     private static final String CORRELATION_ID = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
     private static final UUID PASSENGER_ID = UUID.fromString("a0000000-0000-4000-8000-000000000001");
     // Shared event fixtures of the team (the test runs in src/driver-service)
-    private static final Path FIXTURES = Path.of("..", "..", "docs", "test-data", "events");
+    private static final Path FIXTURES = Path.of("..", "..", "tests", "data", "events");
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
 
     @Autowired

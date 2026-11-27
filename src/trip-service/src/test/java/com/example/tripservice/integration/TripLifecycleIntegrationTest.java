@@ -215,8 +215,7 @@ class TripLifecycleIntegrationTest {
             .findFirst()
             .orElseThrow();
         var payload = mapper.readTree(completed.getPayload()).get("payload");
-        assertEquals(9, payload.size());
-        assertEquals("MOCK", payload.get("paymentProvider").asString());
+        assertEquals(8, payload.size());
         assertTrue(payload.get("finalFare").isNumber());
     }
 
