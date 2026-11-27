@@ -27,7 +27,8 @@ test('expired and wrong-role sessions cannot authorize demo operations', () => {
 test('driver actions require ownership and server lifecycle state', () => {
   assert.deepEqual(driverActions({status:'ASSIGNING',driverId:'d'},'d'), []);
   assert.deepEqual(driverActions({status:'ASSIGNED',driverId:'other'},'d'), []);
-  assert.deepEqual(driverActions({status:'ASSIGNED',driverId:'d'},'d'), ['accept','start']);
+  assert.deepEqual(driverActions({status:'ASSIGNED',driverId:'d'},'d'), ['accept']);
+  assert.deepEqual(driverActions({status:'ASSIGNED',driverId:'d',acceptedAt:'2026-11-27T01:00:00Z'},'d'), ['start']);
   assert.deepEqual(driverActions({status:'IN_PROGRESS',driverId:'d'},'d'), ['complete']);
   assert.deepEqual(driverActions({status:'COMPLETED',driverId:'d'},'d'), []);
 });

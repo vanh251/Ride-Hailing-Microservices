@@ -57,6 +57,9 @@ public class TripResponse {
     @Schema(description = "Timestamp when trip was last updated")
     private Instant updatedAt;
 
+    @Schema(description = "Timestamp when driver explicitly accepted the trip; absent while awaiting acceptance")
+    private Instant acceptedAt;
+
     @Schema(description = "Timestamp when driver started trip")
     private Instant startedAt;
 

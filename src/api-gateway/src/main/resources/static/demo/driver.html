@@ -109,11 +109,7 @@
         RESERVED: ['Đang được ghép chuyến', 'Hệ thống đang xác nhận chuyến cho bạn.'], BUSY: ['Đang có chuyến', 'Hoàn thành chuyến để nhận chuyến mới.']};
 
       let driver = null, trip = null, tripId = null, meMarker = null, line = null, located = false, primed = false, acting = false;
-      // Remembered for the tab so a reload after "Nhận chuyến" shows the next step, not the same button again
-      const acceptedKey = `di-accepted-${me}`;
-      let saved = [];
-      try { saved = JSON.parse(sessionStorage.getItem(acceptedKey) || '[]'); } catch { /* storage blocked */ }
-      const accepted = new Set(saved), seen = new Set(), tripMarkers = {};
+      const seen = new Set(), tripMarkers = {};
       const road = {tripId: null, points: null};
       const preview = {}, searches = {};
       for (const kind of ['pickup', 'destination']) searches[kind] = placeSearch(kind, map, point => {
@@ -170,15 +166,15 @@
         $('job-pill').textContent = TERMINAL.has(trip.status) ? 'Đã kết thúc' : 'Đang diễn ra';
         $('job-title').textContent = title;
         $('job-sub').textContent = sub;
-        $('job').classList.toggle('incoming', trip.status === 'ASSIGNED' && !accepted.has(trip.tripId));
+        $('job').classList.toggle('incoming', trip.status === 'ASSIGNED' && !trip.acceptedAt);
         $('job-facts').innerHTML = `
           <div class="wide"><dt>Điểm đón</dt><dd>${esc(trip.pickup?.address)}</dd></div>
           <div class="wide"><dt>Điểm đến</dt><dd>${esc(trip.destination?.address)}</dd></div>
           <div><dt>Giá chuyến đi</dt><dd>${money(trip.finalFare ?? trip.estimatedFare)}</dd></div>
           <div><dt>Hành khách</dt><dd>Mã ${esc(String(trip.passengerId || '').slice(0, 8))}</dd></div>`;
         const actions = driverActions(trip, me);
-        $('accept').hidden = !actions.includes('accept') || accepted.has(trip.tripId);
-        $('start').hidden = !actions.includes('start') || !accepted.has(trip.tripId);
+        $('accept').hidden = !actions.includes('accept');
+        $('start').hidden = !actions.includes('start');
         $('complete').hidden = !actions.includes('complete');
         for (const id of ['accept', 'start', 'complete']) $(id).disabled = acting;
         const points = ['pickup', 'destination'].filter(kind => trip[kind]).map(kind => {
@@ -236,8 +232,6 @@
 
       $('accept').onclick = () => act('accept', async () => {
         trip = await api(`/api/trips/${tripId}/accept`, {method: 'POST'}, session);
-        accepted.add(tripId);
-        try { sessionStorage.setItem(acceptedKey, JSON.stringify([...accepted].slice(-20))); } catch { /* storage blocked */ }
         toast('Đã nhận chuyến', 'Hãy đến điểm đón hành khách.', 'success');
         map.panTo([trip.pickup.latitude, trip.pickup.longitude]);
       });

@@ -45,3 +45,13 @@ node --test scripts/tests/demo-client-test.mjs scripts/tests/ride-core-test.mjs
 cd src/api-gateway
 .\gradlew.bat test
 ```
+
+### Driver acceptance
+
+`DriverAssignmentConfirmed` acknowledges the server reservation. The passenger stays at
+“Chờ tài xế xác nhận” until the driver calls `POST /api/trips/{id}/accept`.
+That call persists `acceptedAt`; both pages use this value, including after reload.
+Starting a trip before acceptance returns HTTP 409.
+For databases with automatic schema updates disabled, apply
+`scripts/db/2026-11-27-driver-acceptance.sql` to `trip_db` before starting the updated service.
+The default `ddl-auto=update` creates the nullable `accepted_at` column automatically.

@@ -55,3 +55,12 @@ test('notifications read in Vietnamese and unknown ones keep the server text', a
   assert.deepEqual(noteText({recipientType: 'DRIVER', eventType: 'DriverAssignmentConfirmed', title: 'New Trip Assigned'})[0], 'Có chuyến mới');
   assert.deepEqual(noteText({recipientType: 'PASSENGER', eventType: 'ManualNotification', title: 'Hi', message: 'There'}), ['Hi', 'There']);
 });
+
+test('passenger waits for the driver to accept a confirmed assignment', async () => {
+  const {passengerStatus} = await import('../../src/api-gateway/src/main/resources/static/demo/ride-core.mjs');
+  assert.equal(passengerStatus({status: 'SEARCHING'}), 'SEARCHING');
+  assert.equal(passengerStatus({status: 'ASSIGNING'}), 'ASSIGNING');
+  assert.equal(passengerStatus({status: 'ASSIGNED'}), 'ASSIGNING');
+  assert.equal(passengerStatus({status: 'ASSIGNED', acceptedAt: '2026-11-27T01:00:00Z'}), 'ASSIGNED');
+  assert.equal(passengerStatus({status: 'IN_PROGRESS'}), 'IN_PROGRESS');
+});

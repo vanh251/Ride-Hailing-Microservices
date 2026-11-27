@@ -111,15 +111,28 @@ class TripServiceTest {
     }
 
     @Test
-    void acceptPreservesAssignment_withoutNewHistory() {
-        trip(TripStatus.ASSIGNED);
-        assertEquals(driver, service.acceptTrip(id, driver).getDriverId());
+    void acceptPersistsConfirmation_andRepeatedAcceptPreservesIt() {
+        var t = trip(TripStatus.ASSIGNED);
+        var response = service.acceptTrip(id, driver);
+        verify(trips).save(t);
+        assertTrue(JsonMapper.builder().build().writeValueAsString(response).contains("\"acceptedAt\":\"2026-11-09T12:00:00Z\""));
+        service.acceptTrip(id, driver);
+        verify(trips, times(1)).save(t);
         verifyNoInteractions(histories, events);
+    }
+
+    @Test
+    void cannotStartBeforeDriverAccepts() {
+        var t = trip(TripStatus.ASSIGNED);
+        assertThrows(InvalidTripStateException.class, () -> service.startTrip(id, driver));
+        assertEquals(TripStatus.ASSIGNED, t.getStatus());
+        verifyNoInteractions(events, histories);
     }
 
     @Test
     void startPublishesPassengerAndNeverEmptyDriver() {
         trip(TripStatus.ASSIGNED);
+        service.acceptTrip(id, driver);
         assertEquals(TripStatus.IN_PROGRESS, service.startTrip(id, driver).getStatus());
         var captor = ArgumentCaptor.forClass(EventEnvelope.class);
         verify(events).publish(captor.capture());

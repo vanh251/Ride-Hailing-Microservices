@@ -39,6 +39,7 @@ public class TripMapper {
                 .correlationId(trip.getCorrelationId())
                 .createdAt(trip.getCreatedAt())
                 .updatedAt(trip.getUpdatedAt())
+                .acceptedAt(trip.getAcceptedAt())
                 .startedAt(trip.getStartedAt())
                 .completedAt(trip.getCompletedAt())
                 .cancelledAt(trip.getCancelledAt())
