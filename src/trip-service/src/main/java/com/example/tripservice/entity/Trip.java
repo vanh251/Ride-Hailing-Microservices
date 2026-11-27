@@ -100,6 +100,9 @@ public class Trip {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Column(name = "accepted_at")
+    private Instant acceptedAt;
+
     @Column(name = "started_at")
     private Instant startedAt;
 

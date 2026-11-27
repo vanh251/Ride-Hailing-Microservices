@@ -51,7 +51,7 @@ export function parseRoute(values) {
 
 export function driverActions(trip, driverId) {
   if (!driverId || !trip || trip.driverId !== driverId) return [];
-  if (trip.status === 'ASSIGNED') return ['accept','start'];
+  if (trip.status === 'ASSIGNED') return trip.acceptedAt ? ['start'] : ['accept'];
   return trip.status === 'IN_PROGRESS' ? ['complete'] : [];
 }
 

@@ -114,6 +114,10 @@ public class TripServiceImpl implements TripService {
         if (trip.getStatus() != TripStatus.ASSIGNED)
             throw new InvalidTripStateException(trip.getStatus(), TripStatus.ASSIGNED);
         requireDriver(trip, driverId);
+        if (trip.getAcceptedAt() == null) {
+            trip.setAcceptedAt(clock.instant());
+            tripRepository.save(trip);
+        }
         return tripMapper.toResponse(trip);
     }
 
@@ -124,6 +128,8 @@ public class TripServiceImpl implements TripService {
         if (trip.getStatus() != TripStatus.ASSIGNED)
             throw new InvalidTripStateException(trip.getStatus(), TripStatus.IN_PROGRESS);
         requireDriver(trip, driverId);
+        if (trip.getAcceptedAt() == null)
+            throw new InvalidTripStateException("Driver has not accepted the trip");
         transition(trip, TripStatus.IN_PROGRESS, "Driver started trip");
         trip.setStartedAt(clock.instant());
         tripRepository.save(trip);

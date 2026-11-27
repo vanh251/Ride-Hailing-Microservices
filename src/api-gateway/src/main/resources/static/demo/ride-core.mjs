@@ -13,6 +13,11 @@ export const STAGES = [
 const ENDED = {CANCELLED: 'Chuyến đã hủy', PAYMENT_FAILED: 'Thanh toán thất bại'};
 export const TERMINAL = new Set(['PAID', 'CANCELLED', 'PAYMENT_FAILED']);
 
+// Assignment confirmation acknowledges the reservation; acceptance is the driver's own action.
+export function passengerStatus(trip) {
+  return trip?.status === 'ASSIGNED' && !trip.acceptedAt ? 'ASSIGNING' : trip?.status;
+}
+
 export function statusText(status) {
   return ENDED[status] || STAGES.find(([key]) => key === status)?.[1] || 'Chưa có chuyến';
 }
@@ -47,7 +52,7 @@ export function assignedTripId(notifications) {
 const NOTE_TEXT = {
   PASSENGER: {
     RideRequested: ['Đã gửi yêu cầu đặt xe', 'Hệ thống đang tìm tài xế gần bạn.'],
-    DriverAssignmentConfirmed: ['Đã có tài xế', 'Tài xế đã nhận chuyến và đang đến điểm đón.'],
+    DriverAssignmentConfirmed: ['Đã tìm thấy tài xế', 'Đang chờ tài xế nhận chuyến.'],
     TripStarted: ['Chuyến đi bắt đầu', 'Chúc bạn có một chuyến đi vui vẻ.'],
     TripCompleted: ['Đã đến nơi', 'Chuyến đi kết thúc. Vui lòng kiểm tra thông tin thanh toán.'],
     PaymentSucceeded: ['Thanh toán thành công', 'Cảm ơn bạn đã đi cùng Đi.'],
@@ -55,7 +60,7 @@ const NOTE_TEXT = {
     TripCancelled: ['Chuyến đã hủy', 'Chuyến đi của bạn đã được hủy.'],
   },
   DRIVER: {
-    DriverAssignmentConfirmed: ['Có chuyến mới', 'Hãy đến điểm đón hành khách.'],
+    DriverAssignmentConfirmed: ['Có chuyến mới', 'Vui lòng xác nhận nhận chuyến.'],
     PaymentSucceeded: ['Đã nhận thanh toán', 'Hành khách đã thanh toán chuyến đi.'],
     TripCancelled: ['Chuyến đã bị hủy', 'Chuyến không còn hiệu lực. Bạn có thể nhận chuyến mới.'],
   },

@@ -139,7 +139,7 @@ services:
 
   # Web view of topics, messages and consumer lag (docs/operations.md §2), read-only for demos
   kafka-ui:
-    image: ghcr.io/kafbat/kafka-ui:v1.1.0
+    image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
     ports:
       - "${KAFKA_UI_PORT:-8090}:8080"

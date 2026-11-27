@@ -88,7 +88,7 @@
     import {$, esc, api, requireRole, renderAccount, toast, failure, makeMap, pinIcon, placeLabel, placeSearch, locateMe, focusPoint} from './ride.mjs';
     import {nearbyByDistance} from './geo.mjs';
     import {paymentPanel} from './payment.mjs';
-    import {STAGES, TERMINAL, statusText, stageIndex, unseen, canCancel, money, noteText} from './ride-core.mjs';
+    import {passengerStatus, STAGES, TERMINAL, statusText, stageIndex, unseen, canCancel, money, noteText} from './ride-core.mjs';
     import {parseRoute, bookingUncertain} from './client.mjs';
 
     const session = requireRole('PASSENGER');
@@ -113,8 +113,8 @@
         PAYMENT_FAILED: 'Thanh toán không thành công. Vui lòng liên hệ hỗ trợ.',
       };
       const PILL = {SEARCHING: 'warn live', ASSIGNING: 'warn live', ASSIGNED: 'ok live', IN_PROGRESS: 'ok live', COMPLETED: 'warn live', PAID: 'ok', CANCELLED: 'bad', PAYMENT_FAILED: 'bad'};
-      // Every other status change already arrives as a notification popup; ASSIGNING has none
-      const STATUS_TOAST = {ASSIGNING: 'info'};
+      // Acceptance is persisted by the trip API; reservation notifications arrive separately.
+      const STATUS_TOAST = {ASSIGNING: 'info', ASSIGNED: 'success'};
       const NOTE_KIND = {DriverAssignmentConfirmed: 'success', PaymentSucceeded: 'success', PaymentFailed: 'error', TripCancelled: 'warn'};
 
       const tripKey = `di-trip-${session.userId}`;
@@ -255,6 +255,7 @@
 
       // --- Tracking ---
       function follow(next) {
+        next = {...next, status: passengerStatus(next)};
         const changed = trip && trip.status !== next.status;
         if (tripId !== next.tripId) pickupVersion++;
         trip = next; tripId = next.tripId;
