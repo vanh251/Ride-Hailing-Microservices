@@ -14,8 +14,6 @@ public interface PaymentService {
 
     PaymentResponse refund(UUID tripId, String correlationId);
 
-    void processPayosTripCompleted(UUID tripId);
-
     /** The passenger's simulated transfer for a completed trip; repeating it returns the first result. */
     PaymentResponse payTrip(UUID tripId, UUID passengerId);
 

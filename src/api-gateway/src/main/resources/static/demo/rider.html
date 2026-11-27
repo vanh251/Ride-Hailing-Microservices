@@ -55,7 +55,7 @@
         <div class="meta" id="fare-meta">Chọn đủ hai điểm<br>để xem giá</div>
       </div>
       <button id="book" class="btn primary block" disabled>Đặt xe</button>
-      <p class="hint">Thanh toán qua payOS sau khi hoàn thành chuyến đi.</p>
+      <p class="hint">Thanh toán bằng ví Đi sau khi hoàn thành chuyến đi.</p>
     </section>
 
     <section id="track" class="sheet" aria-labelledby="status-title" hidden>
@@ -236,7 +236,7 @@
         busy = true; $('book').disabled = true;
         for (const kind of ['pickup', 'destination']) { searches[kind].clear(); markers[kind]?.dragging?.disable(); $(`${kind}-address`).disabled = true; $(`${kind}-search`).disabled = true; }
         try {
-          const created = await api('/api/trips', {method: 'POST', body: {...payload(), paymentProvider: 'MOCK'}}, session);
+          const created = await api('/api/trips', {method: 'POST', body: payload()}, session);
           primed = true; seen.clear();
           follow(created);
           toast('Đã đặt xe', 'Đang tìm tài xế gần bạn.', 'success');

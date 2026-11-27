@@ -5,7 +5,7 @@ Run from the repository root in Git Bash (Windows), bash or zsh, with `docker co
 | Script | What it does |
 |---|---|
 | `create-topics.sh` | Creates the 6 topics of `docs/events.md` §3. Run automatically by the `kafka-init` service; safe to run again |
-| `send-event.sh <EventType> [options]` | Publishes `docs/test-data/events/<EventType>.json` to its topic with a fresh `eventId`, as if the producing service had sent it |
+| `send-event.sh <EventType> [options]` | Publishes `tests/data/events/<EventType>.json` to its topic with a fresh `eventId`, as if the producing service had sent it |
 | `tail-dlq.sh [topic]` | Prints the dead letter messages (`<topic>.DLQ`) and why each event was rejected |
 
 ## Test a consumer without the other service

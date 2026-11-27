@@ -1,5 +1,5 @@
 // Pure logic of the passenger and driver pages (login.html, rider.html, driver.html); tested by
-// scripts/tests/ride-core-test.mjs. DOM, storage and the map live in ride.mjs.
+// tests/ride-core-test.mjs. DOM, storage and the map live in ride.mjs.
 
 // The trip lifecycle as the passenger sees it (docs/events.md §9)
 export const STAGES = [

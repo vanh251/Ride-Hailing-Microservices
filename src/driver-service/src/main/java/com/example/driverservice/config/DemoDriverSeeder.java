@@ -24,7 +24,7 @@ import java.util.UUID;
  * Creates the driver profiles of identity-service's 10 demo DRIVER accounts so matching has drivers to pick from.
  * driver_id = the fixed user ids identity-service seeds (d0000000-0000-4000-8000-0000000000NN); positions are
  * simulated around Hoan Kiem Lake, Hanoi. Existing profiles are left untouched, so restarts are safe.
- * Turn it off with SEED_DATA_ENABLED=false. Data and distances: docs/test-data/driver/README.md
+ * Turn it off with SEED_DATA_ENABLED=false. Data and distances: tests/data/driver/README.md
  */
 @Slf4j
 @Component
@@ -101,7 +101,7 @@ public class DemoDriverSeeder implements ApplicationRunner {
                 created, DEMO_DRIVERS.size() - created - failed, failed);
         if (failed > 0) {
             log.warn("{} demo driver(s) were not created, see the warnings above. If driver_db was created before "
-                    + "driver_id became the user id, recreate it (docs/test-data/driver/README.md)", failed);
+                    + "driver_id became the user id, recreate it (tests/data/driver/README.md)", failed);
         }
     }
 

@@ -57,12 +57,8 @@ public class TripEventConsumer {
 
             log.info("Processing event: eventType={}, eventId={}, tripId={}, partition={}, offset={}",
                     eventType, eventId, tripId, record.partition(), record.offset());
-            if ("PAYOS".equals(payload.getPaymentProvider())) {
-                paymentService.processPayosTripCompleted(tripId);
-            } else {
-                paymentService.processTripCompleted(eventId, tripId, passengerId, finalFare,
-                        payload.getCurrency(), correlationId);
-            }
+            paymentService.processTripCompleted(eventId, tripId, passengerId, finalFare,
+                    payload.getCurrency(), correlationId);
             acknowledgment.acknowledge();
         } finally {
             MDC.remove(CORRELATION_ID_KEY);

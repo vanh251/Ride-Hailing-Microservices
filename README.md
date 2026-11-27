@@ -3,6 +3,16 @@
 Course: Distributed Systems (DS03)  
 Architecture: **Independent Gradle Microservices Projects** + Spring Cloud Gateway + Apache Kafka + PostgreSQL Database-per-Service + Prometheus / Grafana Monitoring.
 
+## Team & Task Assignment
+
+| # | Member | Student ID | Main responsibility | Support |
+|---|---|---|---|---|
+| 1 | Nguyễn Hải Nam | B23DCCE069 | identity-service (register, login, JWT), driver-service (status, location, CAS reservation, assignment confirmation), security tests | API Gateway, API contracts |
+| 2 | Nguyễn Việt Anh | B23DCCE009 | trip-service (trip lifecycle, Saga orchestration, assignment recovery), matching-service (driver search and reservation, rematching), concurrency test scenarios | Integration tests, demo acceptance |
+| 3 | Bùi Ngọc Thạch | B23DCDT232 | pricing-service, payment-service, notification-service, Kafka (topics, retry, DLQ) | Docker Compose, monitoring (Prometheus, Grafana), CI/CD, passenger and driver web UI |
+
+The project report is in `docs/`.
+
 ---
 
 ## 1. Architecture Overview
@@ -57,7 +67,9 @@ ride-hailing-microservices/
 ├── .env.example
 ├── .gitignore
 ├── README.md
-├── docs/
+├── docs/                       # Project report
+├── scripts/                    # Start/stop, e2e, fault injection, load test, Kafka tools, DB migrations
+├── tests/                      # Web UI tests, contract checks, shared test data (tests/data)
 ├── deploy/
 │   └── monitoring/
 │       ├── prometheus/
@@ -133,6 +145,13 @@ ride-hailing-microservices/
 
 ## 4. How to Build & Run
 
+### Requirements
+
+- Docker with Docker Compose v2 (the whole stack runs in containers)
+- JDK 17, only to build or test a service outside Docker
+- Node.js 18 or newer, only to run the web UI tests in `tests/`
+- Bash (Git Bash on Windows) for the scripts in `scripts/`
+
 ### Step 1: Build services individually (Independent Gradle)
 
 ```bash
@@ -164,13 +183,64 @@ docker compose up -d --build
 - **API Gateway Health**: `http://localhost:8080/actuator/health`
 - **Prometheus Dashboard**: `http://localhost:9090/targets`
 - **Grafana Dashboard**: `http://localhost:3000` (User: `admin` / Password: `admin_secure_password_123`)
+- **Kafka UI** (read only): `http://localhost:8090`
 
-Centralized container logs are available in Grafana's **DS03 Logs** dashboard and **Explore → Loki**.
-See [logging setup and queries](docs/operations.md#21-centralized-logs-in-grafana). Existing Grafana volumes retain
+Centralized container logs are available in Grafana's **DS03 Logs** dashboard and **Explore → Loki**. Existing Grafana volumes retain
 their configured login; the credentials above are only the initial defaults.
+
+### Redeployment
+
+From a fresh clone:
+
+```bash
+cp .env.example .env
+bash scripts/start.sh          # builds, starts every container and waits until all are healthy
+```
+
+After pulling new code, rebuild only the changed services, then restart the stack:
+
+```bash
+docker compose build <service> [<service> ...]
+docker compose up -d
+```
+
+If you keep databases from an older version, first apply the matching scripts in `scripts/db/` (each is safe to rerun). For example:
+
+```bash
+docker compose up -d trip-db
+docker exec -i trip-db sh -c 'psql -U $POSTGRES_USER -d trip_db' < scripts/db/2026-11-27-drop-payment-provider.sql
+```
+
+To start over with empty databases and Kafka topics, run `docker compose down -v` and then `bash scripts/start.sh`.
+`bash scripts/stop.sh` stops the stack and keeps the data.
 
 ## 5. Web Demo
 
-After starting the upgraded stack, open `http://localhost:8080/demo/login.html` for the passenger and driver apps (map, booking, popups), and `http://localhost:8080/demo/index.html` for the two-passengers-one-driver concurrency test. The pages are served by the Gateway and call the real APIs. Service stop/start stays in Docker Desktop or Compose commands.
+After starting the stack, open `http://localhost:8080/demo/login.html` for the passenger and driver apps (map, booking, popups), and `http://localhost:8080/demo/index.html` for the two-passengers-one-driver concurrency test. The pages are served by the Gateway and call the real APIs. Service stop/start stays in Docker Desktop or Compose commands.
 
-See [the demo guide](docs/demo-web.md) for setup, fault recovery, session handling, and tests. Existing W3 databases require the cutover/migrations described in `docs/operations.md` before running the W5 application.
+Demo accounts are created at startup: `driver01` to `driver10@ds03.test` and `passenger01` to `passenger03@ds03.test`, all with password `Demo@12345`. The first eight drivers are available around Hoan Kiem, Hanoi.
+
+### Demonstration scenarios
+
+| Scenario | How to show it |
+|---|---|
+| Services start independently | Start containers one by one; watch them turn healthy and the health panel in Grafana |
+| Driver becomes available | Driver logs in and sets a location; the passenger page shows the car on the map |
+| Passenger books a trip | Pick pickup and destination, see the fare and route, press book |
+| Matching picks a driver | Status moves to waiting for driver confirmation, then driver on the way |
+| Driver accepts and completes | Accept, start, complete; the passenger pays from the wallet and the trip becomes paid |
+| Two passengers, one driver | `/demo/index.html`, send A and B at the same time; only one gets the driver |
+| A service stops mid-flow | Stop `payment-service` while a trip is running, then complete the trip |
+| Retry, queue or compensation | Kafka UI shows the payment group with 0 members and lag 1; or the passenger cancels a trip that already has a driver |
+| Restart and continue | Start `payment-service` again; the pay button appears and the lag returns to 0 |
+
+### Tests
+
+```bash
+cd src/<service> && ./gradlew test        # unit and integration tests of one service
+node --test tests/*test.mjs               # web UI logic
+bash tests/e2e-concurrency-test.sh        # contract check of the concurrency script
+bash scripts/e2e-happy-path.sh            # full trip through the Gateway (stack running)
+bash scripts/e2e-concurrency.sh           # two passengers race for one driver (stack running)
+bash scripts/fault-tests.sh               # payment failure and recovery scenarios (stack running)
+```

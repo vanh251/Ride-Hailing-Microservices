@@ -34,13 +34,13 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
 /**
- * Contract tests against the shared fixtures in docs/test-data/events (docs/events.md v1.1).
+ * Contract tests against the shared fixtures in tests/data/events (docs/events.md v1.1).
  * They fail when this service and the fixture disagree on the fields of an event.
  */
 @ExtendWith(MockitoExtension.class)
 class EventContractTest {
 
-    private static final Path FIXTURES = Path.of("..", "..", "docs", "test-data", "events");
+    private static final Path FIXTURES = Path.of("..", "..", "tests", "data", "events");
 
     private final ObjectMapper objectMapper = new JsonMapper();
 

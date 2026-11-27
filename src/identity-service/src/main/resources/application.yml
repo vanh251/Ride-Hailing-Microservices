@@ -28,7 +28,7 @@ driver-service:
   read-timeout: 2s
   internal-api-key: ${INTERNAL_API_KEY:local-dev-internal-api-key}
 
-# Fake DRIVER/PASSENGER accounts for local runs and demos (docs/test-data/identity/README.md).
+# Fake DRIVER/PASSENGER accounts for local runs and demos (tests/data/identity/README.md).
 # Set SEED_DATA_ENABLED=false for any environment that is not a local/demo one.
 app:
   seed:

@@ -25,12 +25,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 
 /**
- * Feeds every shared fixture of docs/test-data/events (docs/events.md v1.1) to the consumer
+ * Feeds every shared fixture of tests/data/events (docs/events.md v1.1) to the consumer
  * and checks who is notified, as listed in the "Consumer Actions" of each event.
  */
 class EventContractTest {
 
-    private static final Path FIXTURES = Path.of("..", "..", "docs", "test-data", "events");
+    private static final Path FIXTURES = Path.of("..", "..", "tests", "data", "events");
     private static final String PASSENGER = "a0000000-0000-4000-8000-000000000001";
     private static final String DRIVER = "d0000000-0000-4000-8000-000000000001";
 

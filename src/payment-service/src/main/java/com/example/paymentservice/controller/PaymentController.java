@@ -4,7 +4,7 @@ import com.example.paymentservice.dto.request.PaymentChargeRequest;
 import com.example.paymentservice.dto.response.ErrorResponse;
 import com.example.paymentservice.dto.response.PaymentResponse;
 import com.example.paymentservice.exception.BusinessException;
-import com.example.paymentservice.payos.CheckoutIdentity;
+import com.example.paymentservice.security.CallerIdentity;
 import com.example.paymentservice.service.PaymentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -30,7 +30,7 @@ import java.util.UUID;
 public class PaymentController {
 
     private final PaymentService paymentService;
-    private final CheckoutIdentity identity;
+    private final CallerIdentity identity;
 
     @Operation(summary = "Pay a completed trip",
             description = "The trip's passenger pays the amount due with a simulated transfer. Repeating the call "

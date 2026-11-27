@@ -45,7 +45,7 @@ jwt:
 internal:
   api-key: ${INTERNAL_API_KEY:local-dev-internal-api-key}
 
-# Fake driver profiles for identity-service's demo DRIVER accounts (docs/test-data/driver/README.md).
+# Fake driver profiles for identity-service's demo DRIVER accounts (tests/data/driver/README.md).
 # Set SEED_DATA_ENABLED=false for any environment that is not a local/demo one.
 app:
   seed:
