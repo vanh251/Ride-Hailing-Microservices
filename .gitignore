@@ -28,3 +28,9 @@ out/
 CLAUDE.md
 CLAUDE.local.md
 checklist-*.md
+
+# Team-internal files kept locally, not part of the submission
+CODING_CONVENTION.md
+.github/README.md
+scripts/git-*.ps1
+COURSE PROJECT SPECIFICATION.pdf

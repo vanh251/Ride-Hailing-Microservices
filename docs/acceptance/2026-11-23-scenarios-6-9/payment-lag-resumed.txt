@@ -1,5 +1,0 @@
-
-GROUP                 TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG             CONSUMER-ID                                                           HOST            CLIENT-ID
-payment-service-group trip-events     0          6               6               0               consumer-payment-service-group-1-defa1927-a46f-4a5c-8bf3-5b2f6e72868d /172.20.0.13    consumer-payment-service-group-1
-payment-service-group trip-events     2          2               2               0               consumer-payment-service-group-1-defa1927-a46f-4a5c-8bf3-5b2f6e72868d /172.20.0.13    consumer-payment-service-group-1
-payment-service-group trip-events     1          -               0               -               consumer-payment-service-group-1-defa1927-a46f-4a5c-8bf3-5b2f6e72868d /172.20.0.13    consumer-payment-service-group-1
